@@ -16,7 +16,7 @@ HEADERS = {
     "X-Riot-Token": API_KEY
 }
 
-REQUEST_DELAY = 1.25
+REQUEST_DELAY = 1.5
 
 stop_event = Event()
 

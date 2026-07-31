@@ -2,37 +2,166 @@ import math
 import os
 
 import pandas as pd
+from threading import Thread, Lock
 
 from src.process_match import process_match
 from src.parquet_writer import save_match_batch
 
-MATCHS_FILE = "checkpoints/matches_checkpoint.csv"
 
-BATCH_SIZE = 400
+MATCHES_FILE = "checkpoints/matches_checkpoint.csv"
+
+BATCH_SIZE = 100
 
 PARQUET_MATCH_DIR = "data/parquet/matches"
 
 
-def load_match_ids() -> list[str]:
-    """
-    Load all Riot match IDs.
-    """
-    df = pd.read_csv(MATCHS_FILE)
+LANES = {
+    "sea": ("VN2_",),
+    "asia": ("KR_",),
+    "europe": ("EUW1_",),
+    "americas": ("NA1_",)
+}
+
+TEST_LIMIT = None
+# TEST_LIMIT = 100
+
+print_lock = Lock()
+
+def log(message):
+    with print_lock:
+        print(message)
+
+def load_match_ids():
+
+    df = pd.read_csv(
+        MATCHES_FILE
+    )
+
     return df["match_id"].tolist()
 
 
-def batch_exists(batch_id: int) -> bool:
-    """
-    Returns True if this batch has already been written.
-    """
-    filepath = os.path.join(
-        PARQUET_MATCH_DIR,
-        f"part_{batch_id:05d}.parquet"
+def assign_lane(match_id):
+
+    for lane, prefixes in LANES.items():
+
+        if match_id.startswith(prefixes):
+            return lane
+
+    return None
+
+
+def split_lanes(match_ids):
+
+    lanes = {
+        "sea": [],
+        "asia": [],
+        "europe": [],
+        "americas": []
+    }
+
+    for match_id in match_ids:
+
+        lane = assign_lane(match_id)
+
+        if lane:
+            lanes[lane].append(match_id)
+        else:
+            log(f"Unknown match routing: {match_id}")
+
+    return lanes
+
+
+PARQUET_DIR = "data/parquet"
+
+def batch_exists(lane, batch_id):
+    folders = [
+        "matches",
+        "participants",
+        "snapshots",
+        "events"
+    ]
+
+    for folder in folders:
+
+        filepath = os.path.join(
+            PARQUET_DIR,
+            folder,
+            f"{lane}_part_{batch_id:05d}.parquet"
+        )
+
+        if not os.path.exists(filepath):
+            return False
+
+    return True
+
+def process_lane(lane, match_ids):
+
+    total_batches = math.ceil(len(match_ids) / BATCH_SIZE)
+
+    log(f"[{lane}] {len(match_ids)} matches | {total_batches} batches")
+
+
+    for batch_id in range(total_batches):
+
+        if batch_exists(lane, batch_id):
+            log(f"[{lane}] Batch {batch_id} already exists")
+            continue
+
+        start = batch_id * BATCH_SIZE
+        end = min(start + BATCH_SIZE,len(match_ids))
+
+        current_batch = match_ids[start:end]
+
+        log(f"[{lane}] Starting batch {batch_id}")
+
+
+        batch_matches = []
+        batch_participants = []
+        batch_snapshots = []
+        batch_events = []
+
+
+        for i, match_id in enumerate(current_batch):
+            if i % 10 == 0:
+                log(f"[{lane}] Batch {batch_id}: {i}/{len(current_batch)}") # Just for me to see things 
+
+            try:
+                result = process_match(match_id)
+
+            except Exception as e:
+                log(f"[{lane}] Crash processing {match_id}: {e}")
+                continue
+
+            if result is None:
+                log(f"[{lane}] Failed {match_id}")
+                continue
+
+
+            batch_matches.append(result["match"])
+            batch_participants.extend(result["participants"])
+            batch_snapshots.extend(result["snapshots"])
+            batch_events.extend(result["events"])
+
+        save_match_batch(
+            matches=batch_matches,
+            participants=batch_participants,
+            snapshots=batch_snapshots,
+            events=batch_events,
+            batch_id=batch_id,
+            lane=lane
+        )
+
+        log(
+            f"[{lane}] Batch {batch_id} saved | "
+            f"M={len(batch_matches)} "
+            f"P={len(batch_participants)} "
+            f"S={len(batch_snapshots)} "
+            f"E={len(batch_events)}"
+        )
+
+    log(
+        f"[{lane}] COMPLETE"
     )
-
-    return os.path.exists(filepath)
-
-TEST_LIMIT = 100
 
 def main():
 
@@ -40,72 +169,23 @@ def main():
     if TEST_LIMIT:
         match_ids = match_ids[:TEST_LIMIT]
 
-    total_batches = math.ceil(
-        len(match_ids) / BATCH_SIZE
-    )
 
-    print(f"Loaded {len(match_ids)} matches.")
-    print(f"{total_batches} batches of {BATCH_SIZE}.")
+    log(f"Loaded {len(match_ids)} matches")
 
-    for batch_id in range(total_batches):
-
-        if batch_exists(batch_id):
-            print(f"[Batch {batch_id}] Already processed.")
+    lanes = split_lanes(match_ids)
+    threads = []
+    for lane, ids in lanes.items():
+        if not ids:
             continue
 
-        start = batch_id * BATCH_SIZE
-        end = min(start + BATCH_SIZE, len(match_ids))
+        thread = Thread(target=process_lane,args=(lane, ids))
+        thread.start()
+        threads.append(thread)
 
-        print(
-            f"\n========== Batch {batch_id} =========="
-        )
+    for thread in threads:
+        thread.join()
 
-        batch_matches = []
-        batch_participants = []
-        batch_snapshots = []
-        batch_events = []
-
-        for match_id in match_ids[start:end]:
-
-            result = process_match(match_id)
-
-            if result is None:
-                print(f"Failed: {match_id}")
-                continue
-
-            batch_matches.append(
-                result["match"]
-            )
-
-            batch_participants.extend(
-                result["participants"]
-            )
-
-            batch_snapshots.extend(
-                result["snapshots"]
-            )
-
-            batch_events.extend(
-                result["events"]
-            )
-
-        save_match_batch(
-            matches=batch_matches,
-            participants=batch_participants,
-            snapshots=batch_snapshots,
-            events=batch_events,
-            batch_id=batch_id
-        )
-
-        print(
-            f"[Batch {batch_id}] "
-            f"Matches={len(batch_matches)} | "
-            f"Participants={len(batch_participants)} | "
-            f"Snapshots={len(batch_snapshots)} | "
-            f"Events={len(batch_events)}"
-        )
-
-    print("\nAll batches completed.")
+    log("ALL LANES COMPLETE")
 
 
 if __name__ == "__main__":

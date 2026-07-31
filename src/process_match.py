@@ -21,7 +21,6 @@ def process_match(match_id: str) -> dict | None:
 
     Returns None if processing fails.
     """
-    print(f"Processing {match_id}")
     match_json = get_match(match_id)
 
     if match_json is None:

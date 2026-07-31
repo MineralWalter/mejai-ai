@@ -16,35 +16,38 @@ def ensure_data_dir():
         os.makedirs(os.path.join(DATA_DIR, folder),exist_ok=True)
 
 
-def write_parquet_batch(data: list[dict],folder: str,batch_id: int):
-    """
-    Write one parquet batch.
-
-    Example:
-        data/parquet/events/part_00001.parquet
-    """
+def write_parquet_batch(
+    data: list[dict],
+    folder: str,
+    batch_id: int,
+    lane: str
+):
 
     if not data:
         return
-    
-    filepath = os.path.join(DATA_DIR,folder,f"part_{batch_id:05d}.parquet")
+
+    filepath = os.path.join(DATA_DIR,folder,f"{lane}_part_{batch_id:05d}.parquet")
+
     if os.path.exists(filepath):
-        raise FileExistsError(f"Already exists: {filepath}")
-    
+        raise FileExistsError(filepath)
+
     df = pd.DataFrame(data)
 
     temp_path = filepath + ".tmp"
+
     df.to_parquet(temp_path,index=False)
+
     os.rename(temp_path,filepath)
-    
-    print(f"Saved {len(data)} rows -> {filepath}")
+
+    print(f"[{lane}] Saved {len(data)} rows -> {filepath}")
 
 def save_match_batch(
     matches: list[dict],
     participants: list[dict],
     snapshots: list[dict],
     events: list[dict],
-    batch_id: int
+    batch_id: int,
+    lane: str
 ):
     """
     Save one processed batch of matches.
@@ -63,26 +66,30 @@ def save_match_batch(
     write_parquet_batch(
         matches,
         "matches",
-        batch_id
+        batch_id,
+        lane
     )
 
 
     write_parquet_batch(
         participants,
         "participants",
-        batch_id
+        batch_id,
+        lane
     )
 
 
     write_parquet_batch(
         snapshots,
         "snapshots",
-        batch_id
+        batch_id,
+        lane
     )
 
 
     write_parquet_batch(
         events,
         "events",
-        batch_id
+        batch_id,
+        lane
     )
