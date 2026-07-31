@@ -14,12 +14,34 @@ BATCH_SIZE = 100
 
 PARQUET_MATCH_DIR = "data/parquet/matches"
 
-
 LANES = {
-    "sea": ("VN2_",),
-    "asia": ("KR_",),
-    "europe": ("EUW1_",),
-    "americas": ("NA1_",)
+    "sea": (
+        "VN2_",
+        "SG2_",
+        "TW2_",
+        "OC1_",
+        "PH2_",
+        "TH2_"
+    ),
+
+    "asia": (
+        "KR_",
+        "JP1_"
+    ),
+
+    "europe": (
+        "EUW1_",
+        "EUN1_",
+        "TR1_",
+        "RU_"
+    ),
+
+    "americas": (
+        "NA1_",
+        "BR1_",
+        "LA1_",
+        "LA2_"
+    )
 }
 
 TEST_LIMIT = None
