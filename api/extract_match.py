@@ -8,7 +8,8 @@ def extract_match(match_json: dict) -> dict:
 
         # IDs
         "match_id": metadata["matchId"],
-
+        "game_id": info.get("gameId"),
+        
         # Game
         "game_creation": info.get("gameCreation"),
         "game_start_timestamp": info.get("gameStartTimestamp"),
@@ -52,12 +53,43 @@ def extract_participants(match_json: dict) -> list[dict]:
             "puuid": p["puuid"],
             "team_id": p["teamId"],
 
-            # Champion
-            "champion_id": p["championId"],
-            "champion_name": p["championName"],
+            # Role / Champion
+            "team_position": p.get("teamPosition"),
+            "champion_id": p.get("championId"),
+            "champion_name": p.get("championName"),
 
-            # Side
-            "win": p["win"]
+            # Result
+            "win": p.get("win"),
+
+            # Economy
+            "gold_earned": p.get("goldEarned"),
+            "gold_spent": p.get("goldSpent"),
+
+            # Progression
+            "champ_level": p.get("champLevel"),
+            "champ_experience": p.get("champExperience"),
+
+            # Combat
+            "kills": p.get("kills"),
+            "deaths": p.get("deaths"),
+            "assists": p.get("assists"),
+
+            "damage_dealt_to_champions": p.get(
+                "totalDamageDealtToChampions"
+            ),
+
+            "damage_taken": p.get(
+                "totalDamageTaken"
+            ),
+
+            # Items
+            "item0": p.get("item0"),
+            "item1": p.get("item1"),
+            "item2": p.get("item2"),
+            "item3": p.get("item3"),
+            "item4": p.get("item4"),
+            "item5": p.get("item5"),
+            "item6": p.get("item6"),
         })
 
     return participants
