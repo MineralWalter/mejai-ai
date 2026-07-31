@@ -1,1 +1,7 @@
 api/.env
+matches_checkpoint.csv
+players_checkpoint.csv
+processed_checkpoint.csv
+queue_checkpoint.csv
+api/development_datasets/mejai_purchases.csv
+api/development_datasets/processed_matches.csv
