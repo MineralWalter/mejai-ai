@@ -54,7 +54,11 @@ def extract_events(timeline_json: dict, match_id: str) -> list[dict]:
                     "killer_id": event.get("killerId"),
                     "monster_type": event.get("monsterType"),
                     "monster_sub_type": event.get("monsterSubType"),
-                    "team_id": event.get("teamId"),
+                    "item_id": (
+                        int(event["itemId"])
+                        if event.get("itemId") is not None
+                        else None
+                    ),
                 })
 
             events.append(base)

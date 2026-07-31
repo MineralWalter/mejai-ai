@@ -21,7 +21,7 @@ REQUEST_DELAY = 1.25
 stop_event = Event()
 
 
-def riot_request(url, params=None):
+def riot_request(url: str, params=None) -> dict | None:
 
     while True:
 
@@ -61,8 +61,7 @@ def riot_request(url, params=None):
             print(r.text)
             return None
 
-
-def infer_routing(match_id):
+def infer_routing(match_id: str) -> str | None:
 
     if match_id.startswith(("KR_","JP1_")):
         return "asia"
@@ -78,8 +77,7 @@ def infer_routing(match_id):
 
     return None
 
-
-def get_match(match_id):
+def get_match(match_id: str) -> dict | None:
 
     routing = infer_routing(match_id)
     if routing is None:
@@ -91,7 +89,7 @@ def get_match(match_id):
     url = (f"https://{routing}.api.riotgames.com/"f"lol/match/v5/matches/"f"{match_id}")
     return riot_request(url)
 
-def get_timeline(match_id):
+def get_timeline(match_id: str) -> dict | None:
 
     routing = infer_routing(match_id)
     if routing is None:

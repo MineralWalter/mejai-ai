@@ -1,11 +1,10 @@
-from api.match_grab import get_match
-from api.timeline_fetcher import get_timeline
+from src.api.riot_client import get_match, get_timeline
 
-from extractors.extract_match import (extract_match,extract_participants)
+from src.extractors.extract_match import extract_match, extract_participants
 
-from extractors.extract_snapshots import (extract_snapshots)
+from src.extractors.extract_snapshots import extract_snapshots
 
-from extractors.extract_events import (extract_events)
+from src.extractors.extract_events import extract_events
 
 
 def process_match(match_id: str) -> dict | None:
