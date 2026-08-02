@@ -13,3 +13,5 @@ data/parquet/
 __pycache__/
 *.py[cod]
 *$py.class
+project_direction.txt
+test.py

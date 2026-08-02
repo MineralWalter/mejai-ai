@@ -3,7 +3,7 @@ import os
 
 import pandas as pd
 from threading import Thread, Lock
-
+from src.api.riot_client import stop_event
 from src.process_match import process_match
 from src.parquet_writer import save_match_batch
 
@@ -117,35 +117,33 @@ def batch_exists(lane, batch_id):
     return True
 
 def process_lane(lane, match_ids):
-
     total_batches = math.ceil(len(match_ids) / BATCH_SIZE)
 
     log(f"[{lane}] {len(match_ids)} matches | {total_batches} batches")
 
-
     for batch_id in range(total_batches):
+        if stop_event.is_set():
+            log(f"[{lane}] Stopping crawler")
+            return
 
         if batch_exists(lane, batch_id):
             log(f"[{lane}] Batch {batch_id} already exists")
             continue
 
         start = batch_id * BATCH_SIZE
-        end = min(start + BATCH_SIZE,len(match_ids))
-
+        end = min(start + BATCH_SIZE, len(match_ids))
         current_batch = match_ids[start:end]
 
         log(f"[{lane}] Starting batch {batch_id}")
-
 
         batch_matches = []
         batch_participants = []
         batch_snapshots = []
         batch_events = []
 
-
         for i, match_id in enumerate(current_batch):
             if i % 10 == 0:
-                log(f"[{lane}] Batch {batch_id}: {i}/{len(current_batch)}") # Just for me to see things 
+                log(f"[{lane}] Batch {batch_id}: {i}/{len(current_batch)}")
 
             try:
                 result = process_match(match_id)
@@ -155,9 +153,12 @@ def process_lane(lane, match_ids):
                 continue
 
             if result is None:
+                if stop_event.is_set():
+                    log(f"[{lane}] Stopping batch {batch_id}: API unavailable")
+                    return
+
                 log(f"[{lane}] Failed {match_id}")
                 continue
-
 
             batch_matches.append(result["match"])
             batch_participants.extend(result["participants"])
@@ -181,9 +182,7 @@ def process_lane(lane, match_ids):
             f"E={len(batch_events)}"
         )
 
-    log(
-        f"[{lane}] COMPLETE"
-    )
+    log(f"[{lane}] COMPLETE")
 
 def main():
 
