@@ -9,7 +9,7 @@ data/development_datasets/mejai_purchases.csv
 data/development_datasets/processed_matches.csv
 
 data/parquet/
-
+data/processed/
 __pycache__/
 *.py[cod]
 *$py.class
