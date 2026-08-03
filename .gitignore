@@ -24,3 +24,4 @@ data/analysis/mejai_purchase_lifecycles.json
 test.py
 data/analysis/mejai_event_catalogue.json
 data/analysis/mejai_purchase_lifecycles.json
+src/research/diagnose_test.py

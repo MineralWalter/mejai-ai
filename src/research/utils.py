@@ -68,19 +68,22 @@ def find_files(table, lane):
 # PARQUET LOADING
 # ============================================================
 
-def load_table_for_lane(table,lane,columns=None,):
-    # Load a specific Parquet table for one region. If columns is supplied, only those columns are loaded.
-    files = find_files(table,lane,)
+def load_table_for_lane(table, lane, columns=None, match_ids=None):
+    files = find_files(table, lane)
 
     if not files:
         return pd.DataFrame()
 
     frames = []
+
     for filepath in files:
         try:
-            if columns is not None:
+            filters = None
 
-                # Read only the requested columns that actually exist in this file.
+            if match_ids:
+                filters = [("match_id", "in", list(match_ids))]
+
+            if columns is not None:
                 available_columns = pd.read_parquet(filepath,engine="pyarrow",).columns
 
                 selected_columns = [column for column in columns if column in available_columns]
@@ -88,17 +91,15 @@ def load_table_for_lane(table,lane,columns=None,):
                 if not selected_columns:
                     continue
 
-                frame = pd.read_parquet(filepath, columns=selected_columns, engine="pyarrow",)
+                frame = pd.read_parquet(filepath,columns=selected_columns,filters=filters,engine="pyarrow",)
 
             else:
-
-                frame = pd.read_parquet(filepath,engine="pyarrow",)
+                frame = pd.read_parquet(filepath,filters=filters,engine="pyarrow",)
 
             frames.append(frame)
 
         except Exception as error:
-
-            log(f"[ERROR] Could not read "f"{filepath}: {error}")
+            log(f"[ERROR] Could not read {filepath}: {error}")
 
     if not frames:
         return pd.DataFrame()
@@ -223,23 +224,7 @@ def prepare_events(df):
 # RAW DATA LOADING
 # ============================================================
 
-def load_research_raw_data(lifecycles,):
-    """
-    Load only the raw data needed for matches appearing
-    in the lifecycle dataset.
-
-    Returns:
-
-        {
-            "sea": {
-                "matches": ...,
-                "participants": ...,
-                "snapshots": ...
-            },
-            ...
-        }
-    """
-
+def load_research_raw_data(lifecycles):
     if lifecycles.empty:
         return {}
 
@@ -248,51 +233,37 @@ def load_research_raw_data(lifecycles,):
     data = {}
 
     for lane in LANES:
-
         lane_match_ids = {match_id for match_id in match_ids if determine_lane(match_id) == lane}
 
         if not lane_match_ids:
             continue
 
         log("")
-        log(f"========== "f"LOADING {lane.upper()} "f"==========")
+        log(f"========== LOADING {lane.upper()} ==========")
 
-        matches = load_table_for_lane(MATCH_TABLE,lane,)
+        matches = load_table_for_lane(MATCH_TABLE,lane,match_ids=lane_match_ids,)
 
-        participants = load_table_for_lane(PARTICIPANT_TABLE,lane,)
+        participants = load_table_for_lane(PARTICIPANT_TABLE,lane,match_ids=lane_match_ids,)
 
-        snapshots = load_table_for_lane(SNAPSHOT_TABLE,lane,)
+        snapshots = load_table_for_lane(SNAPSHOT_TABLE,lane,match_ids=lane_match_ids,)
 
-        events = load_table_for_lane(EVENT_TABLE,lane,)
-
-        matches = filter_to_match_ids(matches,lane_match_ids,)
-
-        participants = filter_to_match_ids(participants,lane_match_ids,)
-
-        snapshots = filter_to_match_ids(snapshots,lane_match_ids,)
-
-        events = filter_to_match_ids(events,lane_match_ids,)
+        events = load_table_for_lane(EVENT_TABLE,lane,match_ids=lane_match_ids,)
 
         matches = prepare_matches(matches)
-
         participants = prepare_participants(participants)
-
         snapshots = prepare_snapshots(snapshots)
-
         events = prepare_events(events)
 
-        log(f"Matches loaded: "f"{len(matches):,}")
-
-        log(f"Participants loaded: "f"{len(participants):,}")
-
-        log(f"Snapshots loaded: "f"{len(snapshots):,}")
-
+        log(f"Matches loaded: {len(matches):,}")
+        log(f"Participants loaded: {len(participants):,}")
+        log(f"Snapshots loaded: {len(snapshots):,}")
         log(f"Events loaded: {len(events):,}")
+
         data[lane] = {
             "matches": matches,
             "participants": participants,
             "snapshots": snapshots,
             "events": events,
         }
-
+    
     return data
