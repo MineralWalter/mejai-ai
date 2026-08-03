@@ -39,7 +39,6 @@ def inspect_event_types(files):
 
     return dict(sorted(counts.items(), key=lambda x: x[0]))
 
-
 def inspect_item_events(files):
     item_events = []
 
@@ -50,15 +49,14 @@ def inspect_item_events(files):
             log(f"[ERROR] Could not read {filepath}: {e}")
             continue
 
-        if "item_id" not in df.columns:
+        required_columns = ["item_id","before_item_id","after_item_id"]
+
+        available_columns = [column for column in required_columns if column in df.columns]
+
+        if not available_columns:
             continue
 
-        filtered = df[
-            df["item_id"].notna()
-        ].copy()
-
-        if filtered.empty:
-            continue
+        filtered = df.copy()
 
         filtered["source_file"] = str(filepath)
         item_events.append(filtered)

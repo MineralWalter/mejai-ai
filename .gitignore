@@ -14,4 +14,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 project_direction.txt
+
+data/analysis/feature_schema.json
+data/analysis/mejai_event_catalogue.json
+data/analysis/mejai_lifecycle_validation.json
+data/analysis/mejai_purchase_lifecycles.json
+data/analysis/mejai_event_catalogue.json
+data/analysis/mejai_purchase_lifecycles.json
 test.py
+data/analysis/mejai_event_catalogue.json
+data/analysis/mejai_purchase_lifecycles.json

@@ -1,5 +1,5 @@
 '''
-Discovered 429 really weird case of purchased again be4 sale, need to look into it more
+Discovered 429 really weird case of purchased again be4 sale, need to look into it more ( SOLVED)
 '''
 from pathlib import Path
 import json
@@ -78,14 +78,10 @@ def prepare_events(df):
 
     return df
 
-
 def reconstruct_lifecycles(df):
     lifecycles = []
 
-    grouped = df.groupby(
-        ["match_id", "participant_id"],
-        sort=False
-    )
+    grouped = df.groupby(["match_id", "participant_id"], sort=False)
 
     for (match_id, participant_id), group in grouped:
         group = group.sort_values("timestamp")
@@ -110,6 +106,22 @@ def reconstruct_lifecycles(df):
                 open_purchase = {
                     "timestamp": timestamp
                 }
+
+            elif event_type == "ITEM_UNDO":
+                if open_purchase is not None:
+                    before_item_id = event.get("before_item_id")
+
+                    if pd.notna(before_item_id) and int(before_item_id) == 3041:
+                        lifecycles.append({
+                            "match_id": match_id,
+                            "participant_id": int(participant_id),
+                            "purchase_timestamp": open_purchase["timestamp"],
+                            "sale_timestamp": None,
+                            "time_held_ms": None,
+                            "status": "UNDONE"
+                        })
+
+                        open_purchase = None
 
             elif event_type == "ITEM_SOLD":
                 if open_purchase is not None:
@@ -137,7 +149,6 @@ def reconstruct_lifecycles(df):
             })
 
     return lifecycles
-
 
 def save_lifecycles(lifecycles):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
