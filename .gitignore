@@ -25,3 +25,13 @@ test.py
 data/analysis/mejai_event_catalogue.json
 data/analysis/mejai_purchase_lifecycles.json
 src/research/diagnose_test.py
+src/research/AI/test_ollama.py
+data/analysis/mejai_control_candidates.parquet
+data/analysis/matching_diagnostics/control_match_reuse.csv
+data/analysis/matching_diagnostics/control_player_reuse.csv
+data/analysis/matching_diagnostics/matched_case_control_outcomes.csv
+data/analysis/matching_diagnostics/matched_case_coverage.csv
+data/analysis/matching_diagnostics/matched_covariate_balance.csv
+data/analysis/matching_diagnostics/matching_coverage_by_purchase_time.csv
+data/analysis/matching_diagnostics/matching_coverage_by_status.csv
+data/analysis/matching_diagnostics/matching_score_outliers.csv

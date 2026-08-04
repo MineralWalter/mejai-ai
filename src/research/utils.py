@@ -267,3 +267,70 @@ def load_research_raw_data(lifecycles):
         }
     
     return data
+
+# ============================================================
+# CONTROL-GROUP RAW DATA LOADING
+# ============================================================
+
+def load_control_raw_data(lifecycles):
+    """
+    Load raw data for matches that do NOT contain a Mejai purchase.
+    """
+
+    if lifecycles.empty:
+        return {}
+
+    mejai_match_ids = set(lifecycles["match_id"].astype(str))
+
+    data = {}
+
+    for lane in LANES:
+
+        matches = load_table_for_lane(MATCH_TABLE,lane,)
+
+        matches = prepare_matches(matches)
+
+        if matches.empty:
+            continue
+
+        all_match_ids = set(matches["match_id"].astype(str))
+
+        control_match_ids = (all_match_ids- mejai_match_ids)
+
+        log(f"Matches available: "f"{len(all_match_ids):,}")
+
+        log(f"Matches containing Mejai purchases: "f"{len(all_match_ids & mejai_match_ids):,}")
+
+        log(f"Non-Mejai control matches: "f"{len(control_match_ids):,}")
+
+        if not control_match_ids:
+            continue
+
+        # ----------------------------------------------------
+        # Load participants only from non-Mejai matches.
+        # ----------------------------------------------------
+
+        participants = load_table_for_lane(PARTICIPANT_TABLE,lane,match_ids=control_match_ids,)
+
+        participants = prepare_participants(participants)
+
+        # ----------------------------------------------------
+        # Load snapshots only from non-Mejai matches.
+        # ----------------------------------------------------
+
+        snapshots = load_table_for_lane(SNAPSHOT_TABLE,lane,match_ids=control_match_ids,)
+
+        snapshots = prepare_snapshots(snapshots)
+
+        log(f"Control matches loaded: "f"{len(control_match_ids):,}")
+
+        log(f"Control participants loaded: "f"{len(participants):,}")
+
+        log(f"Control snapshots loaded: "f"{len(snapshots):,}")
+
+        data[lane] = {"matches": matches[matches["match_id"].astype(str).isin(control_match_ids)].copy(),
+            "participants": participants,
+            "snapshots": snapshots,
+        }
+
+    return data
