@@ -429,24 +429,6 @@ def evaluate_model(
 # ============================================================
 
 def print_coefficients(model):
-    log("")
-    log("[9] Standardised logistic regression coefficients...")
-    log("")
-    log(
-        "For numeric predictors, coefficients represent "
-        "the change in log-odds associated with a "
-        "one-standard-deviation increase in that predictor."
-    )
-
-    log(
-        "Positive coefficient = associated with higher "
-        "predicted win probability."
-    )
-
-    log(
-        "Negative coefficient = associated with lower "
-        "predicted win probability."
-    )
 
     preprocessor = model.named_steps[
         "preprocessor"

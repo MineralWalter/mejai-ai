@@ -468,17 +468,6 @@ def evaluate_model(model, X_test, y_test):
 # ============================================================
 
 def show_coefficients(model):
-    log("")
-    log("[8] Logistic regression coefficients...")
-    log("")
-    log(
-        "Positive coefficient = associated "
-        "with higher predicted win probability."
-    )
-    log(
-        "Negative coefficient = associated "
-        "with lower predicted win probability."
-    )
 
     preprocessor = model.named_steps[
         "preprocessor"

@@ -17,25 +17,23 @@ from utils import (
 
 LIFECYCLE_FILE = Path("data/analysis/mejai_purchase_lifecycles.json")
 OUTPUT_DIR = Path("data/analysis")
-OUTPUT_FILE = OUTPUT_DIR / "mejai_control_candidates.parquet"
+OUTPUT_FILE = OUTPUT_DIR / "mejai_control_candidate_pool_generalized.parquet"
 
-MAX_TIME_GAP_MS = 30_000
-MAX_CONTROLS_PER_CASE = 3
+MAX_TIME_GAP_MS = 60_000
+MAX_CONTROLS_PER_CASE = 30
 
 MAX_LEVEL_GAP = 1
-MAX_GOLD_GAP_RATIO = 0.20
-MAX_TEAM_GOLD_GAP_RATIO = 0.25
-MAX_TEAM_XP_GAP_RATIO = 0.25
-MAX_TEAM_CS_GAP_RATIO = 0.25
 
-# Direct game-advantage tolerances.
-#
-# These fix the imbalance found in the matching diagnostics.
-# Unlike team totals, differentials can be negative or close to
-# zero, so absolute gaps are more appropriate than ratios.
-MAX_TEAM_GOLD_DIFF_GAP = 1_500
-MAX_TEAM_XP_DIFF_GAP = 1_200
-MAX_TEAM_CS_DIFF_GAP = 25
+# Primary broad-state candidate calipers.
+MAX_PLAYER_GOLD_GAP_RATIO = 0.25
+MAX_PLAYER_GOLD_DIFF_VS_ROLE_GAP = 2_500
+MAX_REST_OF_TEAM_GOLD_DIFF_GAP = 4_000
+
+# Secondary state variables are retained for ranking and diagnostics,
+# but are not used as strict exclusion criteria.
+PLAYER_XP_DIFF_SCORE_SCALE = 2_500
+REST_OF_TEAM_XP_DIFF_SCORE_SCALE = 4_000
+TIME_GAP_SCORE_SCALE_MS = 60_000
 
 TIME_BUCKET_MS = 30_000
 
@@ -202,30 +200,45 @@ def prepare_snapshots(snapshots, participants):
 
 def add_team_state_features(snapshots):
     """
-    Add team and enemy state to every snapshot using vectorized
-    groupby transforms.
+    Add whole-team state and same-role opponent state.
 
-    This replaces the old Python loops over every match/timestamp
-    and every player snapshot.
+    `enemy_*` remains the whole opposing-team aggregate. The
+    `role_opponent_*` fields identify the player at the same
+    team_position on the opposing team.
     """
 
     if snapshots.empty:
         return snapshots
 
-    required = ["match_id", "timestamp", "team_id"]
+    required = [
+        "match_id",
+        "timestamp",
+        "team_id",
+        "participant_id",
+        "team_position",
+        "total_gold",
+        "xp",
+    ]
     missing = [column for column in required if column not in snapshots.columns]
 
     if missing:
-        log(f"[ERROR] Snapshot table missing team-state columns: {missing}")
+        log(f"[ERROR] Snapshot table missing state columns: {missing}")
         return pd.DataFrame()
 
-    snapshots = snapshots.dropna(subset=["team_id"]).copy()
-    snapshots["team_id"] = pd.to_numeric(
-        snapshots["team_id"],
-        errors="coerce",
+    snapshots = snapshots.dropna(
+        subset=["team_id", "participant_id", "team_position"]
+    ).copy()
+
+    snapshots["team_id"] = pd.to_numeric(snapshots["team_id"], errors="coerce")
+    snapshots["participant_id"] = pd.to_numeric(
+        snapshots["participant_id"], errors="coerce"
     )
-    snapshots = snapshots.dropna(subset=["team_id"])
+    snapshots = snapshots.dropna(subset=["team_id", "participant_id"])
     snapshots["team_id"] = snapshots["team_id"].astype(int)
+    snapshots["participant_id"] = snapshots["participant_id"].astype(int)
+    snapshots["team_position"] = (
+        snapshots["team_position"].astype(str).str.strip().str.upper()
+    )
 
     team_keys = ["match_id", "timestamp", "team_id"]
     match_keys = ["match_id", "timestamp"]
@@ -257,6 +270,61 @@ def add_team_state_features(snapshots):
         snapshots[f"team_{output_name}"] = team_total
         snapshots[f"enemy_{output_name}"] = enemy_total
         snapshots[f"team_{output_name}_diff"] = team_total - enemy_total
+
+    opponent_columns = [
+        "match_id",
+        "timestamp",
+        "team_position",
+        "team_id",
+        "participant_id",
+        "total_gold",
+        "xp",
+    ]
+    opponents = snapshots[opponent_columns].rename(
+        columns={
+            "team_id": "role_opponent_team_id",
+            "participant_id": "role_opponent_participant_id",
+            "total_gold": "role_opponent_total_gold",
+            "xp": "role_opponent_xp",
+        }
+    )
+
+    snapshots = snapshots.merge(
+        opponents,
+        on=["match_id", "timestamp", "team_position"],
+        how="left",
+    )
+    snapshots = snapshots[
+        snapshots["team_id"] != snapshots["role_opponent_team_id"]
+    ].copy()
+
+    snapshots = snapshots.sort_values(
+        [
+            "match_id",
+            "timestamp",
+            "participant_id",
+            "role_opponent_participant_id",
+        ],
+        kind="stable",
+    ).drop_duplicates(
+        subset=["match_id", "timestamp", "participant_id"],
+        keep="first",
+    )
+
+    snapshots["player_gold_diff_vs_role_opponent"] = (
+        snapshots["total_gold"] - snapshots["role_opponent_total_gold"]
+    )
+    snapshots["player_xp_diff_vs_role_opponent"] = (
+        snapshots["xp"] - snapshots["role_opponent_xp"]
+    )
+    snapshots["rest_of_team_gold_diff"] = (
+        snapshots["team_total_gold_diff"]
+        - snapshots["player_gold_diff_vs_role_opponent"]
+    )
+    snapshots["rest_of_team_xp_diff"] = (
+        snapshots["team_xp_diff"]
+        - snapshots["player_xp_diff_vs_role_opponent"]
+    )
 
     snapshots["time_bucket"] = snapshots["timestamp"] // TIME_BUCKET_MS
 
@@ -388,16 +456,17 @@ def relative_gap_array(values, reference):
 
 def score_control_candidates(case_snapshot, candidates, target_timestamp):
     """
-    Apply hard matching tolerances and calculate a normalized
-    matching score.
+    Build a broad candidate pool using a compact generalized game state.
 
-    The matcher now constrains both:
+    Hard candidate restrictions:
+        - same region, handled by the caller
+        - same position and nearby level, handled by the index
+        - control snapshot at or before the case purchase time
+        - player total gold
+        - player gold advantage versus same-role opponent
+        - rest-of-team gold advantage
 
-        - absolute team totals
-        - team-versus-enemy differentials
-
-    This prevents a control with a similar team economy but a
-    substantially different lead/deficit from being selected.
+    XP-based state is used for ranking only, not strict exclusion.
     """
 
     if candidates.empty:
@@ -406,27 +475,21 @@ def score_control_candidates(case_snapshot, candidates, target_timestamp):
     required_case_values = {
         "level": case_snapshot.get("level", np.nan),
         "total_gold": case_snapshot.get("total_gold", np.nan),
-        "team_total_gold": case_snapshot.get("team_total_gold", np.nan),
-        "team_xp": case_snapshot.get("team_xp", np.nan),
-        "team_cs": case_snapshot.get("team_cs", np.nan),
-        "team_total_gold_diff": case_snapshot.get(
-            "team_total_gold_diff",
-            np.nan,
+        "player_gold_diff_vs_role_opponent": case_snapshot.get(
+            "player_gold_diff_vs_role_opponent", np.nan
         ),
-        "team_xp_diff": case_snapshot.get(
-            "team_xp_diff",
-            np.nan,
+        "player_xp_diff_vs_role_opponent": case_snapshot.get(
+            "player_xp_diff_vs_role_opponent", np.nan
         ),
-        "team_cs_diff": case_snapshot.get(
-            "team_cs_diff",
-            np.nan,
+        "rest_of_team_gold_diff": case_snapshot.get(
+            "rest_of_team_gold_diff", np.nan
+        ),
+        "rest_of_team_xp_diff": case_snapshot.get(
+            "rest_of_team_xp_diff", np.nan
         ),
     }
 
-    if any(
-        pd.isna(value)
-        for value in required_case_values.values()
-    ):
+    if any(pd.isna(value) for value in required_case_values.values()):
         return pd.DataFrame()
 
     required_control_columns = [
@@ -435,51 +498,34 @@ def score_control_candidates(case_snapshot, candidates, target_timestamp):
         "participant_id",
         "level",
         "total_gold",
-        "team_total_gold",
-        "team_xp",
-        "team_cs",
-        "team_total_gold_diff",
-        "team_xp_diff",
-        "team_cs_diff",
+        "player_gold_diff_vs_role_opponent",
+        "player_xp_diff_vs_role_opponent",
+        "rest_of_team_gold_diff",
+        "rest_of_team_xp_diff",
     ]
-
     missing = [
-        column
-        for column in required_control_columns
+        column for column in required_control_columns
         if column not in candidates.columns
     ]
-
     if missing:
         return pd.DataFrame()
 
     candidates = candidates.copy()
-
-    # Snapshot must be at or before the purchase and no more
-    # than MAX_TIME_GAP_MS old.
     candidates = candidates[
-        (
-            candidates["timestamp"]
-            <= int(target_timestamp)
-        )
-        & (
-            candidates["timestamp"]
-            >= int(target_timestamp)
-            - MAX_TIME_GAP_MS
+        candidates["timestamp"].between(
+            int(target_timestamp) - MAX_TIME_GAP_MS,
+            int(target_timestamp),
+            inclusive="both",
         )
     ]
 
     if candidates.empty:
         return candidates
 
-    # Keep only the latest eligible observation for each
-    # potential control player.
     candidates = (
         candidates.sort_values("timestamp")
         .drop_duplicates(
-            subset=[
-                "match_id",
-                "participant_id",
-            ],
+            subset=["match_id", "participant_id"],
             keep="last",
         )
         .copy()
@@ -489,87 +535,24 @@ def score_control_candidates(case_snapshot, candidates, target_timestamp):
         candidates["level"].to_numpy(dtype=float)
         - float(required_case_values["level"])
     )
-
-    gold_gap = relative_gap_array(
+    player_gold_gap = relative_gap_array(
         candidates["total_gold"].to_numpy(dtype=float),
         required_case_values["total_gold"],
     )
-
-    team_gold_gap = relative_gap_array(
-        candidates["team_total_gold"].to_numpy(dtype=float),
-        required_case_values["team_total_gold"],
+    player_gold_diff_gap = np.abs(
+        candidates["player_gold_diff_vs_role_opponent"].to_numpy(dtype=float)
+        - float(required_case_values["player_gold_diff_vs_role_opponent"])
     )
-
-    team_xp_gap = relative_gap_array(
-        candidates["team_xp"].to_numpy(dtype=float),
-        required_case_values["team_xp"],
-    )
-
-    team_cs_gap = relative_gap_array(
-        candidates["team_cs"].to_numpy(dtype=float),
-        required_case_values["team_cs"],
-    )
-
-    team_gold_diff_gap = np.abs(
-        candidates[
-            "team_total_gold_diff"
-        ].to_numpy(dtype=float)
-        - float(
-            required_case_values[
-                "team_total_gold_diff"
-            ]
-        )
-    )
-
-    team_xp_diff_gap = np.abs(
-        candidates[
-            "team_xp_diff"
-        ].to_numpy(dtype=float)
-        - float(
-            required_case_values[
-                "team_xp_diff"
-            ]
-        )
-    )
-
-    team_cs_diff_gap = np.abs(
-        candidates[
-            "team_cs_diff"
-        ].to_numpy(dtype=float)
-        - float(
-            required_case_values[
-                "team_cs_diff"
-            ]
-        )
+    rest_team_gold_diff_gap = np.abs(
+        candidates["rest_of_team_gold_diff"].to_numpy(dtype=float)
+        - float(required_case_values["rest_of_team_gold_diff"])
     )
 
     valid = (
         (level_gap <= MAX_LEVEL_GAP)
-        & (gold_gap <= MAX_GOLD_GAP_RATIO)
-        & (
-            team_gold_gap
-            <= MAX_TEAM_GOLD_GAP_RATIO
-        )
-        & (
-            team_xp_gap
-            <= MAX_TEAM_XP_GAP_RATIO
-        )
-        & (
-            team_cs_gap
-            <= MAX_TEAM_CS_GAP_RATIO
-        )
-        & (
-            team_gold_diff_gap
-            <= MAX_TEAM_GOLD_DIFF_GAP
-        )
-        & (
-            team_xp_diff_gap
-            <= MAX_TEAM_XP_DIFF_GAP
-        )
-        & (
-            team_cs_diff_gap
-            <= MAX_TEAM_CS_DIFF_GAP
-        )
+        & (player_gold_gap <= MAX_PLAYER_GOLD_GAP_RATIO)
+        & (player_gold_diff_gap <= MAX_PLAYER_GOLD_DIFF_VS_ROLE_GAP)
+        & (rest_team_gold_diff_gap <= MAX_REST_OF_TEAM_GOLD_DIFF_GAP)
     )
 
     if not valid.any():
@@ -577,36 +560,31 @@ def score_control_candidates(case_snapshot, candidates, target_timestamp):
 
     candidates = candidates.loc[valid].copy()
 
-    # Normalize each component by its allowed tolerance.
-    #
-    # This prevents a one-level difference from dominating
-    # every economy and team-state component.
-    candidates[
-        "control_match_state_score"
-    ] = (
-        level_gap[valid]
-        / max(MAX_LEVEL_GAP, 1)
-        + gold_gap[valid]
-        / MAX_GOLD_GAP_RATIO
-        + team_gold_gap[valid]
-        / MAX_TEAM_GOLD_GAP_RATIO
-        + team_xp_gap[valid]
-        / MAX_TEAM_XP_GAP_RATIO
-        + team_cs_gap[valid]
-        / MAX_TEAM_CS_GAP_RATIO
-        + team_gold_diff_gap[valid]
-        / MAX_TEAM_GOLD_DIFF_GAP
-        + team_xp_diff_gap[valid]
-        / MAX_TEAM_XP_DIFF_GAP
-        + team_cs_diff_gap[valid]
-        / MAX_TEAM_CS_DIFF_GAP
+    time_gap = (
+        int(target_timestamp)
+        - candidates["timestamp"].to_numpy(dtype=float)
+    )
+    player_xp_diff_gap = np.abs(
+        candidates["player_xp_diff_vs_role_opponent"].to_numpy(dtype=float)
+        - float(required_case_values["player_xp_diff_vs_role_opponent"])
+    )
+    rest_team_xp_diff_gap = np.abs(
+        candidates["rest_of_team_xp_diff"].to_numpy(dtype=float)
+        - float(required_case_values["rest_of_team_xp_diff"])
     )
 
-    candidates[
-        "control_snapshot_age_ms"
-    ] = (
-        int(target_timestamp)
-        - candidates["timestamp"]
+    candidates["control_match_state_score"] = (
+        player_gold_gap[valid] / MAX_PLAYER_GOLD_GAP_RATIO
+        + player_gold_diff_gap[valid] / MAX_PLAYER_GOLD_DIFF_VS_ROLE_GAP
+        + rest_team_gold_diff_gap[valid] / MAX_REST_OF_TEAM_GOLD_DIFF_GAP
+        + 0.35 * level_gap[valid] / max(MAX_LEVEL_GAP, 1)
+        + 0.25 * time_gap / TIME_GAP_SCORE_SCALE_MS
+        + 0.20 * player_xp_diff_gap / PLAYER_XP_DIFF_SCORE_SCALE
+        + 0.20 * rest_team_xp_diff_gap / REST_OF_TEAM_XP_DIFF_SCORE_SCALE
+    )
+
+    candidates["control_snapshot_age_ms"] = (
+        int(target_timestamp) - candidates["timestamp"]
     )
 
     return candidates.nsmallest(
@@ -659,6 +637,13 @@ def build_output_row(mejai_case, case_snapshot, control_snapshot):
             row[f"mejai_player_{column}"] = case_snapshot[column]
 
     for column in [
+        "role_opponent_participant_id",
+        "role_opponent_total_gold",
+        "role_opponent_xp",
+        "player_gold_diff_vs_role_opponent",
+        "player_xp_diff_vs_role_opponent",
+        "rest_of_team_gold_diff",
+        "rest_of_team_xp_diff",
         "team_total_gold",
         "enemy_total_gold",
         "team_total_gold_diff",
@@ -749,6 +734,13 @@ def build_control_dataset(lifecycles, case_data, control_data):
             "team_total_gold_diff",
             "team_xp_diff",
             "team_cs_diff",
+            "role_opponent_participant_id",
+            "role_opponent_total_gold",
+            "role_opponent_xp",
+            "player_gold_diff_vs_role_opponent",
+            "player_xp_diff_vs_role_opponent",
+            "rest_of_team_gold_diff",
+            "rest_of_team_xp_diff",
             "time_bucket",
         ]
 
@@ -773,6 +765,13 @@ def build_control_dataset(lifecycles, case_data, control_data):
                 "team_total_gold_diff",
                 "team_xp_diff",
                 "team_cs_diff",
+                "role_opponent_participant_id",
+                "role_opponent_total_gold",
+                "role_opponent_xp",
+                "player_gold_diff_vs_role_opponent",
+                "player_xp_diff_vs_role_opponent",
+                "rest_of_team_gold_diff",
+                "rest_of_team_xp_diff",
             ]
         ).reset_index(drop=True)
 
@@ -868,7 +867,7 @@ def build_control_dataset(lifecycles, case_data, control_data):
 def print_summary(df):
     log("")
     log("=" * 70)
-    log("CONTROL GROUP CANDIDATE SUMMARY")
+    log("GENERALISED CONTROL CANDIDATE POOL SUMMARY")
     log("=" * 70)
     log(f"Control candidate rows: {len(df):,}")
 
@@ -918,7 +917,7 @@ def save_dataset(df):
 
 def main():
     log("=" * 70)
-    log("MEJAI CONTROL GROUP CONSTRUCTION")
+    log("GENERALISED MEJAI CONTROL CANDIDATE POOL")
     log("=" * 70)
 
     lifecycles = prepare_lifecycles(load_lifecycles())
@@ -944,7 +943,7 @@ def main():
         return
 
     log("")
-    log("Building control candidates...")
+    log("Building generalized control candidate pool...")
     controls = build_control_dataset(
         lifecycles,
         case_data,
@@ -967,7 +966,7 @@ def main():
     save_dataset(controls)
 
     log("")
-    log("[PASSED] CONTROL CANDIDATES CONSTRUCTED")
+    log("[PASSED] GENERALISED CONTROL CANDIDATE POOL CONSTRUCTED")
 
 
 if __name__ == "__main__":
