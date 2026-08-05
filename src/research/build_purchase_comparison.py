@@ -1,10 +1,13 @@
-from pathlib import Path
 import json
 
 import numpy as np
 import pandas as pd
 
-from utils import (
+from src.research.config import (
+    LIFECYCLE_FILE,
+    V2_CONTROL_POOL,
+)
+from src.research.utils import (
     determine_lane,
     load_research_raw_data,
     load_control_raw_data,
@@ -14,10 +17,6 @@ from utils import (
 # ============================================================
 # CONFIG
 # ============================================================
-
-LIFECYCLE_FILE = Path("data/analysis/mejai_purchase_lifecycles.json")
-OUTPUT_DIR = Path("data/analysis")
-OUTPUT_FILE = OUTPUT_DIR / "mejai_control_candidate_pool_generalized.parquet"
 
 MAX_TIME_GAP_MS = 60_000
 MAX_CONTROLS_PER_CASE = 30
@@ -906,9 +905,11 @@ def print_summary(df):
 
 
 def save_dataset(df):
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(OUTPUT_FILE, index=False)
-    log(f"[SAVED] Control candidates written to: {OUTPUT_FILE}")
+    V2_CONTROL_POOL.parent.mkdir(parents=True,exist_ok=True,)
+
+    df.to_parquet(V2_CONTROL_POOL,index=False,)
+
+    log(f"[SAVED] Control candidates written to: "f"{V2_CONTROL_POOL}")
 
 
 # ============================================================

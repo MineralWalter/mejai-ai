@@ -1,13 +1,21 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pandas as pd
 
-from utils import load_research_raw_data,determine_lane
+from src.research.config import (
+    CASE_DATASET,
+    LIFECYCLE_FILE,
+)
+from src.research.utils import (
+    determine_lane,
+    get_valid_match_ids,
+    load_research_raw_data,
+)
 
-INPUT_FILE = Path("data/analysis/mejai_purchase_lifecycles.json")
-OUTPUT_DIR = Path("data/analysis")
-OUTPUT_FILE = OUTPUT_DIR / "mejai_research_dataset.parquet"
+
+MAX_SNAPSHOT_AGE_MS = 60_000
+
 
 def log(message):
     print(message)
@@ -18,12 +26,12 @@ def log(message):
 # ============================================================
 
 def load_lifecycles():
-    if not INPUT_FILE.exists():
-        log(f"[ERROR] Lifecycle file not found: {INPUT_FILE}")
+    if not LIFECYCLE_FILE.exists():
+        log(f"[ERROR] Lifecycle file not found: {LIFECYCLE_FILE}")
         return pd.DataFrame()
 
     try:
-        with open(INPUT_FILE, "r", encoding="utf-8") as file:
+        with open(LIFECYCLE_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
     except Exception as error:
         log(f"[ERROR] Could not read lifecycle file: {error}")
@@ -54,15 +62,12 @@ def prepare_lifecycles(df):
         return pd.DataFrame()
 
     df = df.copy()
-
     df["match_id"] = df["match_id"].astype(str)
-
-    df["participant_id"] = pd.to_numeric(
-        df["participant_id"],
+    df["participant_id"] = pd.to_numeric(df["participant_id"], errors="coerce")
+    df["purchase_timestamp"] = pd.to_numeric(
+        df["purchase_timestamp"],
         errors="coerce",
     )
-
-    df["purchase_timestamp"] = pd.to_numeric(df["purchase_timestamp"],errors="coerce",)
 
     df = df.dropna(
         subset=[
@@ -70,10 +75,46 @@ def prepare_lifecycles(df):
             "participant_id",
             "purchase_timestamp",
             "status",
-        ])
+        ]
+    )
 
     df["participant_id"] = df["participant_id"].astype(int)
     df["purchase_timestamp"] = df["purchase_timestamp"].astype(int)
+    df["status"] = df["status"].astype(str).str.strip().str.upper()
+
+    duplicate_cases = df.duplicated(
+        subset=[
+            "match_id",
+            "participant_id",
+            "purchase_timestamp",
+        ],
+        keep=False,
+    )
+
+    if duplicate_cases.any():
+        examples = df.loc[
+            duplicate_cases,
+            [
+                "match_id",
+                "participant_id",
+                "purchase_timestamp",
+                "status",
+            ],
+        ].head(20)
+
+        raise ValueError(
+            "Duplicate lifecycle cases found:\n"
+            + examples.to_string(index=False)
+        )
+
+    valid_match_ids = get_valid_match_ids()
+    invalid_match_ids = set(df["match_id"]) - set(valid_match_ids)
+
+    if invalid_match_ids:
+        raise ValueError(
+            "Lifecycle data contains invalid matches:\n"
+            + "\n".join(sorted(invalid_match_ids)[:20])
+        )
 
     return df.reset_index(drop=True)
 
@@ -93,7 +134,6 @@ def build_participant_lookup(participants):
             str(row["match_id"]),
             int(row["participant_id"]),
         )
-
         lookup[key] = row
 
     return lookup
@@ -124,29 +164,53 @@ def build_snapshot_index(snapshots, participants):
 
     snapshots = snapshots.copy()
 
-    # --------------------------------------------------------
-    # ATTACH TEAM ID TO EACH SNAPSHOT
-    # --------------------------------------------------------
-
     if not participants.empty:
+        team_lookup = (
+            participants[
+                [
+                    "match_id",
+                    "participant_id",
+                    "team_id",
+                ]
+            ]
+            .drop_duplicates(
+                subset=[
+                    "match_id",
+                    "participant_id",
+                ]
+            )
+        )
 
-        team_lookup = (participants[["match_id","participant_id","team_id",]].drop_duplicates(subset=["match_id","participant_id",]))
+        snapshots = snapshots.merge(
+            team_lookup,
+            on=[
+                "match_id",
+                "participant_id",
+            ],
+            how="left",
+            validate="many_to_one",
+        )
 
-        snapshots = snapshots.merge(team_lookup,on=["match_id","participant_id",],how="left",)
+    snapshots = snapshots.sort_values(
+        [
+            "participant_id",
+            "timestamp",
+        ],
+        kind="stable",
+    )
 
-    snapshots = snapshots.sort_values(["participant_id","timestamp",])
-
-    by_participant = {}
-
-    for participant_id, group in snapshots.groupby(
-        "participant_id",
-        sort=False,
-    ):
-        by_participant[int(participant_id)] = group
+    by_participant = {
+        int(participant_id): group.reset_index(drop=True)
+        for participant_id, group in snapshots.groupby(
+            "participant_id",
+            sort=False,
+        )
+    }
 
     by_timestamp = {
         int(timestamp): group
-        for timestamp, group in snapshots.groupby("timestamp",
+        for timestamp, group in snapshots.groupby(
+            "timestamp",
             sort=False,
         )
     }
@@ -182,25 +246,26 @@ def get_latest_player_snapshot(
     return player_snapshots.iloc[position]
 
 
-
-
-def build_snapshot_features(snapshot_index,participant_id,player_team_id,purchase_timestamp,):
-    player_snapshot = get_latest_player_snapshot(snapshot_index,participant_id,purchase_timestamp,)
+def build_snapshot_features(
+    snapshot_index,
+    participant_id,
+    player_team_id,
+    purchase_timestamp,
+):
+    player_snapshot = get_latest_player_snapshot(
+        snapshot_index,
+        participant_id,
+        purchase_timestamp,
+    )
 
     if player_snapshot is None:
         return None
 
     features = {}
-
     snapshot_timestamp = int(player_snapshot["timestamp"])
 
     features["snapshot_timestamp"] = snapshot_timestamp
-
-    features["snapshot_age_ms"] = (purchase_timestamp- snapshot_timestamp)
-
-    # --------------------------------------------------------
-    # PLAYER BASE STATE
-    # --------------------------------------------------------
+    features["snapshot_age_ms"] = purchase_timestamp - snapshot_timestamp
 
     player_columns = [
         "current_gold",
@@ -215,17 +280,9 @@ def build_snapshot_features(snapshot_index,participant_id,player_team_id,purchas
 
     for column in player_columns:
         if column in player_snapshot.index:
-            features[f"player_{column}"] = (
-                player_snapshot[column]
-            )
+            features[f"player_{column}"] = player_snapshot[column]
 
-    # --------------------------------------------------------
-    # ALL PLAYERS AT SAME SNAPSHOT TIMESTAMP
-    # --------------------------------------------------------
-
-    same_timestamp = snapshot_index[
-        "by_timestamp"
-    ].get(snapshot_timestamp)
+    same_timestamp = snapshot_index["by_timestamp"].get(snapshot_timestamp)
 
     if same_timestamp is None or same_timestamp.empty:
         return features
@@ -233,17 +290,12 @@ def build_snapshot_features(snapshot_index,participant_id,player_team_id,purchas
     if "team_id" not in same_timestamp.columns:
         return features
 
-    # --------------------------------------------------------
-    # TEAM / ENEMY SNAPSHOTS
-    # --------------------------------------------------------
-
-    team_snapshots = same_timestamp[same_timestamp["team_id"] == player_team_id]
-
-    enemy_snapshots = same_timestamp[same_timestamp["team_id"] != player_team_id]
-
-    # --------------------------------------------------------
-    # TEAM / ENEMY AGGREGATES
-    # --------------------------------------------------------
+    team_snapshots = same_timestamp[
+        same_timestamp["team_id"] == player_team_id
+    ]
+    enemy_snapshots = same_timestamp[
+        same_timestamp["team_id"] != player_team_id
+    ]
 
     aggregate_columns = [
         "current_gold",
@@ -255,40 +307,46 @@ def build_snapshot_features(snapshot_index,participant_id,player_team_id,purchas
 
     for column in aggregate_columns:
         if column in team_snapshots.columns:
-            features[f"team_{column}_sum"] = (team_snapshots[column].sum())
+            features[f"team_{column}_sum"] = team_snapshots[column].sum()
 
         if column in enemy_snapshots.columns:
-            features[f"enemy_{column}_sum"] = (enemy_snapshots[column].sum())
+            features[f"enemy_{column}_sum"] = enemy_snapshots[column].sum()
 
-    # --------------------------------------------------------
-    # RELATIVE FEATURES
-    # --------------------------------------------------------
-
-    if ("total_gold" in team_snapshots.columns and "total_gold" in enemy_snapshots.columns):
+    if (
+        "total_gold" in team_snapshots.columns
+        and "total_gold" in enemy_snapshots.columns
+    ):
         features["team_total_gold_diff"] = (
             team_snapshots["total_gold"].sum()
             - enemy_snapshots["total_gold"].sum()
         )
 
-    if ("current_gold" in team_snapshots.columns and "current_gold" in enemy_snapshots.columns):
+    if (
+        "current_gold" in team_snapshots.columns
+        and "current_gold" in enemy_snapshots.columns
+    ):
         features["team_current_gold_diff"] = (
             team_snapshots["current_gold"].sum()
             - enemy_snapshots["current_gold"].sum()
         )
 
-    if ("xp" in team_snapshots.columns and "xp" in enemy_snapshots.columns):
+    if "xp" in team_snapshots.columns and "xp" in enemy_snapshots.columns:
         features["team_xp_diff"] = (
             team_snapshots["xp"].sum()
             - enemy_snapshots["xp"].sum()
         )
 
-    if ("minions_killed" in team_snapshots.columns and "minions_killed" in enemy_snapshots.columns):
+    if (
+        "minions_killed" in team_snapshots.columns
+        and "minions_killed" in enemy_snapshots.columns
+    ):
         features["team_cs_diff"] = (
             team_snapshots["minions_killed"].sum()
             - enemy_snapshots["minions_killed"].sum()
         )
 
     return features
+
 
 # ============================================================
 # PLAYER / MATCH CONTEXT
@@ -299,7 +357,6 @@ def build_player_context(participant_row):
         return {}
 
     features = {}
-
     allowed_columns = [
         "team_id",
         "team_position",
@@ -319,7 +376,6 @@ def build_match_context(match_row):
         return {}
 
     features = {}
-
     allowed_columns = [
         "game_version",
         "queue_id",
@@ -358,119 +414,53 @@ def build_outcomes(match_row, participant_row):
 
         for column in final_columns:
             if column in participant_row.index:
-                outcomes[f"outcome_final_{column}"] = (
-                    participant_row[column]
-                )
+                outcomes[f"outcome_final_{column}"] = participant_row[column]
 
     if match_row is not None:
         if "game_duration" in match_row.index:
-            outcomes["outcome_game_duration"] = (
-                match_row["game_duration"]
-            )
+            outcomes["outcome_game_duration"] = match_row["game_duration"]
 
         if "end_of_game_result" in match_row.index:
-            outcomes["outcome_game_result"] = (
-                match_row["end_of_game_result"]
-            )
+            outcomes["outcome_game_result"] = match_row["end_of_game_result"]
 
     return outcomes
 
-
-# ============================================================
-# CASE CONSTRUCTION
-# ============================================================
-'''
-def build_case(lifecycle, tables):
-    match_id = str(lifecycle["match_id"])
-    participant_id = int(lifecycle["participant_id"])
-    purchase_timestamp = int(lifecycle["purchase_timestamp"])
-
-    matches = tables["matches"]
-    participants = tables["participants"]
-    snapshots = tables["snapshots"]
-
-    match_lookup = build_match_lookup(matches)
-    participant_lookup = build_participant_lookup(participants)
-
-    match_row = match_lookup.get(match_id)
-
-    if match_row is None:
-        return None, "missing_match"
-
-    participant_row = participant_lookup.get((match_id, participant_id))
-
-    if participant_row is None:
-        return None, "missing_participant"
-
-    if "team_id" not in participant_row.index:
-        return None, "missing_team_id"
-
-    player_team_id = int(participant_row["team_id"])
-    match_snapshots = snapshots[snapshots["match_id"] == match_id]
-
-    snapshot_features = build_snapshot_features(
-        match_snapshots,
-        participant_id,
-        player_team_id,
-        purchase_timestamp,
-    )
-
-    if snapshot_features is None:
-        return None, "missing_pre_purchase_snapshot"
-
-    case = {
-        "case_id": (
-            f"{match_id}_"
-            f"{participant_id}_"
-            f"{purchase_timestamp}"),
-        "match_id": match_id,
-        "participant_id": participant_id,
-        "region": determine_lane(match_id),
-        "purchase_timestamp": purchase_timestamp,
-        "purchase_time_seconds": (purchase_timestamp / 1000),
-        "lifecycle_status": lifecycle["status"],
-        }
-
-    case.update(build_match_context(match_row))
-
-    case.update(build_player_context(participant_row))
-
-    case.update(snapshot_features)
-
-    # Outcomes are deliberately kept under an
-    # explicit outcome_ namespace.
-    case.update(build_outcomes(match_row,participant_row,))
-
-    return case, None
-'''
 
 # ============================================================
 # TEMPORAL VALIDATION
 # ============================================================
 
 def validate_temporal_order(case):
-    if "snapshot_timestamp" not in case:
+    required_columns = [
+        "snapshot_timestamp",
+        "purchase_timestamp",
+        "snapshot_age_ms",
+    ]
+
+    if any(column not in case for column in required_columns):
         return False
 
-    if "purchase_timestamp" not in case:
-        return False
+    snapshot_timestamp = int(case["snapshot_timestamp"])
+    purchase_timestamp = int(case["purchase_timestamp"])
+    snapshot_age_ms = int(case["snapshot_age_ms"])
 
-    return (case["snapshot_timestamp"] <= case["purchase_timestamp"])
+    return (
+        snapshot_timestamp <= purchase_timestamp
+        and 0 <= snapshot_age_ms <= MAX_SNAPSHOT_AGE_MS
+    )
 
 
 # ============================================================
 # DATASET BUILDING
 # ============================================================
+
 def build_dataset(lifecycles, data):
     cases = []
     failures = {}
 
     for lane, tables in data.items():
-
         lane_lifecycles = lifecycles[
-            lifecycles["match_id"].astype(str).map(
-                determine_lane
-            ) == lane
+            lifecycles["match_id"].astype(str).map(determine_lane) == lane
         ]
 
         if lane_lifecycles.empty:
@@ -481,90 +471,77 @@ def build_dataset(lifecycles, data):
         snapshots = tables["snapshots"]
 
         match_lookup = build_match_lookup(matches)
-        participant_lookup = build_participant_lookup(
-            participants
-        )
-
-
+        participant_lookup = build_participant_lookup(participants)
         snapshot_indexes = {}
 
         if not snapshots.empty:
-            for match_id, match_snapshots in snapshots.groupby("match_id",sort=False,):
-                snapshot_indexes[str(match_id)] = (build_snapshot_index(match_snapshots, participants))
+            for match_id, match_snapshots in snapshots.groupby(
+                "match_id",
+                sort=False,
+            ):
+                match_participants = participants[
+                    participants["match_id"].astype(str) == str(match_id)
+                ]
 
+                snapshot_indexes[str(match_id)] = build_snapshot_index(
+                    match_snapshots,
+                    match_participants,
+                )
 
         for _, lifecycle in lane_lifecycles.iterrows():
-
             match_id = str(lifecycle["match_id"])
-
             participant_id = int(lifecycle["participant_id"])
-
             purchase_timestamp = int(lifecycle["purchase_timestamp"])
-
-            # ------------------------------------------------
-            # MATCH
-            # ------------------------------------------------
 
             match_row = match_lookup.get(match_id)
 
             if match_row is None:
-                failures["missing_match"] = (failures.get("missing_match", 0) + 1)
+                failures["missing_match"] = failures.get("missing_match", 0) + 1
                 continue
 
-            # ------------------------------------------------
-            # PARTICIPANT
-            # ------------------------------------------------
-
-            participant_row = participant_lookup.get((match_id, participant_id))
-
-            if participant_row is None:
-                failures["missing_participant"] = (failures.get("missing_participant",0,) + 1)
-                continue
-
-            # ------------------------------------------------
-            # TEAM ID
-            # ------------------------------------------------
-
-            if "team_id" not in participant_row.index:
-                failures["missing_team_id"] = (failures.get("missing_team_id",0,) + 1)
-                continue
-
-            player_team_id = int(
-                participant_row["team_id"]
-            )
-
-            # ------------------------------------------------
-            # SNAPSHOT INDEX
-            # ------------------------------------------------
-
-            snapshot_index = snapshot_indexes.get(
-                match_id
-            )
-
-            if snapshot_index is None:
-                failures["missing_snapshots"] = (failures.get("missing_snapshots",0,) + 1)
-                continue
-
-            # ------------------------------------------------
-            # SNAPSHOT FEATURES
-            # ------------------------------------------------
-
-            snapshot_features = (
-                build_snapshot_features(
-                    snapshot_index,
+            participant_row = participant_lookup.get(
+                (
+                    match_id,
                     participant_id,
-                    player_team_id,
-                    purchase_timestamp,
                 )
             )
 
-            if snapshot_features is None:
-                failures["missing_pre_purchase_snapshot"] = (failures.get("missing_pre_purchase_snapshot",0,) + 1)
+            if participant_row is None:
+                failures["missing_participant"] = (
+                    failures.get("missing_participant", 0) + 1
+                )
                 continue
 
-            # ------------------------------------------------
-            # CASE
-            # ------------------------------------------------
+            if (
+                "team_id" not in participant_row.index
+                or pd.isna(participant_row["team_id"])
+            ):
+                failures["missing_team_id"] = (
+                    failures.get("missing_team_id", 0) + 1
+                )
+                continue
+
+            player_team_id = int(participant_row["team_id"])
+            snapshot_index = snapshot_indexes.get(match_id)
+
+            if snapshot_index is None:
+                failures["missing_snapshots"] = (
+                    failures.get("missing_snapshots", 0) + 1
+                )
+                continue
+
+            snapshot_features = build_snapshot_features(
+                snapshot_index,
+                participant_id,
+                player_team_id,
+                purchase_timestamp,
+            )
+
+            if snapshot_features is None:
+                failures["missing_pre_purchase_snapshot"] = (
+                    failures.get("missing_pre_purchase_snapshot", 0) + 1
+                )
+                continue
 
             case = {
                 "case_id": (
@@ -575,53 +552,142 @@ def build_dataset(lifecycles, data):
                 "match_id": match_id,
                 "participant_id": participant_id,
                 "region": lane,
-                "purchase_timestamp": (purchase_timestamp),
-                "purchase_time_seconds": (purchase_timestamp / 1000),
-                "lifecycle_status": (lifecycle["status"]),
+                "purchase_timestamp": purchase_timestamp,
+                "purchase_time_seconds": purchase_timestamp / 1000,
+                "lifecycle_status": lifecycle["status"],
             }
 
-            # ------------------------------------------------
-            # CONTEXT
-            # ------------------------------------------------
-
             case.update(build_match_context(match_row))
-
             case.update(build_player_context(participant_row))
-
             case.update(snapshot_features)
-
-            # ------------------------------------------------
-            # OUTCOMES
-            # ------------------------------------------------
-
-            case.update(build_outcomes(match_row,participant_row,))
-
-            # ------------------------------------------------
-            # TEMPORAL VALIDATION
-            # ------------------------------------------------
+            case.update(build_outcomes(match_row, participant_row))
 
             if not validate_temporal_order(case):
-                failures["future_snapshot"] = (
-                    failures.get(
-                        "future_snapshot",
-                        0,
-                    ) + 1
+                failures["invalid_snapshot_timing"] = (
+                    failures.get("invalid_snapshot_timing", 0) + 1
                 )
                 continue
 
             cases.append(case)
 
-            # ------------------------------------------------
-            # PROGRESS LOGGING
-            # ------------------------------------------------
-
             if len(cases) % 1000 == 0:
-                log(
-                    f"Cases processed: "
-                    f"{len(cases):,}"
-                )
+                log(f"Cases processed: {len(cases):,}")
 
     return pd.DataFrame(cases), failures
+
+
+# ============================================================
+# FINAL VALIDATION
+# ============================================================
+
+def validate_dataset(dataset, lifecycles, failures):
+    if dataset.empty:
+        raise ValueError("Research dataset is empty")
+
+    required_columns = {
+        "case_id",
+        "match_id",
+        "participant_id",
+        "region",
+        "purchase_timestamp",
+        "purchase_time_seconds",
+        "lifecycle_status",
+        "snapshot_timestamp",
+        "snapshot_age_ms",
+        "team_id",
+        "team_position",
+        "outcome_win",
+        "outcome_game_result",
+    }
+
+    missing_columns = sorted(required_columns - set(dataset.columns))
+
+    if missing_columns:
+        raise ValueError(
+            f"Research dataset is missing columns: {missing_columns}"
+        )
+
+    if dataset["case_id"].duplicated().any():
+        raise ValueError("Duplicate case IDs found in research dataset")
+
+    expected_case_ids = {
+        (
+            f"{row.match_id}_"
+            f"{int(row.participant_id)}_"
+            f"{int(row.purchase_timestamp)}"
+        )
+        for row in lifecycles.itertuples(index=False)
+    }
+
+    actual_case_ids = set(dataset["case_id"].astype(str))
+    missing_case_ids = expected_case_ids - actual_case_ids
+    unexpected_case_ids = actual_case_ids - expected_case_ids
+
+    if missing_case_ids:
+        examples = "\n".join(sorted(missing_case_ids)[:20])
+        raise ValueError(
+            f"{len(missing_case_ids):,} lifecycle cases were not constructed.\n"
+            f"Examples:\n{examples}\n"
+            f"Recorded failures: {failures}"
+        )
+
+    if unexpected_case_ids:
+        examples = "\n".join(sorted(unexpected_case_ids)[:20])
+        raise ValueError(
+            f"{len(unexpected_case_ids):,} unexpected cases were constructed.\n"
+            f"Examples:\n{examples}"
+        )
+
+    valid_match_ids = get_valid_match_ids()
+    invalid_matches = set(dataset["match_id"].astype(str)) - set(valid_match_ids)
+
+    if invalid_matches:
+        raise ValueError(
+            "Dataset contains invalid matches:\n"
+            + "\n".join(sorted(invalid_matches)[:20])
+        )
+
+    if not dataset["participant_id"].between(1, 10).all():
+        raise ValueError("Dataset contains participant IDs outside 1-10")
+
+    calculated_age = (
+        dataset["purchase_timestamp"]
+        - dataset["snapshot_timestamp"]
+    )
+
+    if not calculated_age.eq(dataset["snapshot_age_ms"]).all():
+        raise ValueError("Stored snapshot ages do not match the timestamps")
+
+    if not dataset["snapshot_age_ms"].between(
+        0,
+        MAX_SNAPSHOT_AGE_MS,
+        inclusive="both",
+    ).all():
+        raise ValueError(
+            "Dataset contains future snapshots or snapshots older than 60 seconds"
+        )
+
+    if not dataset["queue_id"].eq(420).all():
+        raise ValueError("Dataset contains non-ranked-solo cases")
+
+    if not dataset["outcome_game_result"].eq("GameComplete").all():
+        raise ValueError("Dataset contains incomplete matches")
+
+    if dataset["outcome_win"].isna().any():
+        raise ValueError("Dataset contains missing win outcomes")
+
+    if failures:
+        raise ValueError(
+            "Case construction recorded failures:\n"
+            f"{failures}"
+        )
+
+    return dataset
+
+
+# ============================================================
+# REPORTING AND OUTPUT
+# ============================================================
 
 def print_summary(df, failures):
     log("========== DATASET SUMMARY ==========")
@@ -630,11 +696,14 @@ def print_summary(df, failures):
 
     if not df.empty:
         log(f"Regions: {df['region'].nunique():,}")
-
         log("Lifecycle statuses:")
 
-        for status, count in (df["lifecycle_status"].value_counts().items()):
+        for status, count in df["lifecycle_status"].value_counts().items():
             log(f"{status}: {count:,}")
+
+        log("")
+        log("Snapshot age:")
+        log(df["snapshot_age_ms"].describe().to_string())
 
     if failures:
         log("========== BUILD EXCLUSIONS ==========")
@@ -644,12 +713,26 @@ def print_summary(df, failures):
 
 
 def save_dataset(df):
-    OUTPUT_DIR.mkdir(parents=True,exist_ok=True,)
+    CASE_DATASET.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    df.to_parquet(OUTPUT_FILE,index=False,)
+    temporary_path = Path(
+        str(CASE_DATASET) + ".tmp"
+    )
+
+    df.to_parquet(
+        temporary_path,
+        index=False,
+        engine="pyarrow",
+    )
+
+    temporary_path.replace(CASE_DATASET)
 
     log("")
-    log(f"Research dataset written to: {OUTPUT_FILE}")
+    log(f"Research dataset written to: {CASE_DATASET}")
+
 
 def main():
     log("===========================================")
@@ -669,6 +752,7 @@ def main():
         return
 
     log(f"Lifecycle episodes: {len(lifecycles):,}")
+
     data = load_research_raw_data(lifecycles)
 
     if not data:
@@ -678,15 +762,21 @@ def main():
     log("")
     log("========== BUILDING CASE DATASET ==========")
 
-    dataset, failures = build_dataset(lifecycles,data,)
+    dataset, failures = build_dataset(
+        lifecycles,
+        data,
+    )
 
-    if dataset.empty:
-        log("[ERROR] No research cases could be constructed")
-        return
+    dataset = validate_dataset(
+        dataset,
+        lifecycles,
+        failures,
+    )
 
-    dataset = dataset.drop_duplicates(subset=["case_id"]).reset_index(drop=True)
-
-    print_summary(dataset,failures,)
+    print_summary(
+        dataset,
+        failures,
+    )
 
     save_dataset(dataset)
 
@@ -694,6 +784,7 @@ def main():
     log("===========================================")
     log("[PASSED] RESEARCH DATASET CONSTRUCTED")
     log("===========================================")
+
 
 if __name__ == "__main__":
     main()
