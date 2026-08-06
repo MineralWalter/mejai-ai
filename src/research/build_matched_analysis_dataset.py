@@ -713,38 +713,44 @@ def select_primary(cases, candidates):
 
     return selected, target_case_ids
 
-
 def select_sensitivity(cases, candidates):
     target_case_ids = set(
         cases.loc[
-            cases[
-                "lifecycle_status"
-            ].isin(PRIMARY_STATUSES),
+            cases["lifecycle_status"].isin(
+                PRIMARY_STATUSES
+            ),
             "case_id",
         ]
     )
 
-    eligible = candidates[
+    # Apply every mandatory eligibility rule first.
+    caliper_eligible = candidates[
         candidates["case_id"].isin(
             target_case_ids
         )
         & (
-            candidates[
-                "current_gold_gap"
-            ]
+            candidates["current_gold_gap"]
             <= MAX_CURRENT_GOLD_GAP
         )
     ].copy()
 
-    exact_available = (
-        eligible.groupby("case_id")[
+    # An exact-history candidate only counts as available
+    # when it also passes the current-gold caliper.
+    exact_available_by_case = (
+        caliper_eligible.groupby("case_id")[
             "dark_seal_history_match"
         ]
-        .transform("any")
+        .any()
     )
 
-    eligible = eligible[
-        eligible[
+    exact_available = (
+        caliper_eligible["case_id"]
+        .map(exact_available_by_case)
+        .fillna(False)
+    )
+
+    eligible = caliper_eligible[
+        caliper_eligible[
             "dark_seal_history_match"
         ]
         | ~exact_available
@@ -767,18 +773,6 @@ def select_sensitivity(cases, candidates):
         ]
     )
 
-    exact_available_by_case = (
-        candidates[
-            candidates["case_id"].isin(
-                target_case_ids
-            )
-        ]
-        .groupby("case_id")[
-            "dark_seal_history_match"
-        ]
-        .any()
-    )
-
     invalid_fallback = selected[
         selected[
             "selection_used_fallback"
@@ -792,12 +786,11 @@ def select_sensitivity(cases, candidates):
         raise ValueError(
             "Sensitivity matching used a "
             "Dark Seal mismatch even though "
-            "an exact-history candidate was "
-            "available"
+            "an eligible exact-history "
+            "candidate was available"
         )
 
     return selected, target_case_ids
-
 
 def select_primary_1to1(
     primary_selected,
