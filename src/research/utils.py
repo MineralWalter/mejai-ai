@@ -530,14 +530,7 @@ def prepare_events(df):
 # CASE RAW DATA LOADING
 # ============================================================
 
-def load_research_raw_data(lifecycles):
-    """
-    Load raw data for eligible matches containing Mejai purchase
-    cases.
-
-    Lifecycle matches that fail the valid-match manifest are
-    automatically excluded.
-    """
+def load_research_raw_data(lifecycles, include_events=True):
 
     if lifecycles.empty:
         return {}
@@ -614,11 +607,14 @@ def load_research_raw_data(lifecycles):
             match_ids=lane_match_ids,
         )
 
-        events = load_table_for_lane(
-            EVENT_TABLE,
-            lane,
-            match_ids=lane_match_ids,
-        )
+        if include_events:
+            events = load_table_for_lane(
+                EVENT_TABLE,
+                lane,
+                match_ids=lane_match_ids,
+            )
+        else:
+            events = pd.DataFrame()
 
         matches = prepare_matches(
             matches

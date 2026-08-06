@@ -10,7 +10,7 @@ from src.research.config import (
 from src.research.utils import (
     determine_lane,
     get_valid_match_ids,
-    load_research_raw_data,
+    load_research_raw_data
 )
 
 
@@ -753,7 +753,7 @@ def main():
 
     log(f"Lifecycle episodes: {len(lifecycles):,}")
 
-    data = load_research_raw_data(lifecycles)
+    data = load_research_raw_data(lifecycles, include_events=False)
 
     if not data:
         log("[ERROR] No raw data loaded")

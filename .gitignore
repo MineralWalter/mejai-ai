@@ -87,3 +87,7 @@ data/analysis/enriched_candidate_pool/validation/combined_candidate_validation.c
 data/analysis/enriched_candidate_pool/validation/control_candidate_validation_errors.parquet
 data/analysis/enriched_candidate_pool/validation/control_candidate_validation.csv
 data/analysis/enriched_candidate_pool/validation/enriched_candidate_pool_validation_report.txt
+data/analysis/dark_seal_zero_case_audit.csv
+data/analysis/mejai_control_candidate_pool_generalized_event_enriched.parquet
+data/analysis/mejai_research_dataset_event_enriched.parquet
+src/research/no_darkseal.py

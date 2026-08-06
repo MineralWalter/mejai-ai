@@ -1,75 +1,249 @@
-from __future__ import annotations
-
 import ast
 import json
-import warnings
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-
-# ============================================================
-# CONFIG
-# ============================================================
-
-PRIMARY_INPUT = Path("data/analysis/mejai_matched_primary.parquet")
-SENSITIVITY_INPUT = Path("data/analysis/mejai_matched_sensitivity.parquet")
-AUDIT_INVENTORY_FILE = Path(
-    "data/analysis/purchase_feature_audit/parquet_file_inventory.csv"
+from src.research.config import (
+    CASE_DATASET,
+    PARQUET_DIR,
+    V2_CONTROL_POOL,
 )
-PARQUET_ROOT = Path("data/parquet")
 
-OUTPUT_DIR = Path("data/analysis")
-PRIMARY_OUTPUT = OUTPUT_DIR / "mejai_matched_primary_features.parquet"
-SENSITIVITY_OUTPUT = OUTPUT_DIR / "mejai_matched_sensitivity_features.parquet"
-DIAGNOSTICS_OUTPUT = OUTPUT_DIR / "purchase_decision_feature_diagnostics.csv"
 
 RECENT_WINDOW_MS = 5 * 60 * 1000
 DARK_SEAL_ITEM_ID = 1082
 LOG_EVERY_FILES = 25
 
-ALIASES = {
-    "match_id": ["match_id", "matchId"],
-    "event_type": ["event_type", "type", "event_name"],
-    "timestamp": ["timestamp", "event_timestamp"],
-    "participant_id": ["participant_id", "participantId"],
-    "killer_id": ["killer_id", "killerId"],
-    "victim_id": ["victim_id", "victimId"],
-    "assisting_ids": [
-        "assisting_ids",
-        "assisting_participant_ids",
-        "assistingParticipantIds",
-        "assists",
-    ],
-    "item_id": ["item_id", "itemId"],
-}
+FEATURE_COLUMNS = [
+    "dark_seal_purchased_before_observation",
+    "kills_last_5m",
+    "deaths_last_5m",
+    "assists_last_5m",
+]
+
+CASE_OUTPUT = (
+    CASE_DATASET.parent
+    / "mejai_research_dataset_event_enriched.parquet"
+)
+
+CONTROL_OUTPUT = (
+    V2_CONTROL_POOL.parent
+    / "mejai_control_candidate_pool_generalized_event_enriched.parquet"
+)
 
 
-# ============================================================
-# HELPERS
-# ============================================================
-
-def log(message: str) -> None:
+def log(message=""):
     print(message)
 
 
-def first_existing(columns, candidates):
-    available = set(columns)
-    return next((candidate for candidate in candidates if candidate in available), None)
+def load_inputs():
+    if not CASE_DATASET.exists():
+        raise FileNotFoundError(
+            f"Case dataset not found: {CASE_DATASET}"
+        )
+
+    if not V2_CONTROL_POOL.exists():
+        raise FileNotFoundError(
+            f"Version 2 control pool not found: {V2_CONTROL_POOL}"
+        )
+
+    cases = pd.read_parquet(CASE_DATASET, engine="pyarrow")
+    controls = pd.read_parquet(V2_CONTROL_POOL, engine="pyarrow")
+
+    required_case_columns = [
+        "case_id",
+        "match_id",
+        "participant_id",
+        "purchase_timestamp",
+    ]
+
+    required_control_columns = [
+        "case_id",
+        "control_match_id",
+        "control_participant_id",
+        "control_snapshot_timestamp",
+    ]
+
+    missing_case_columns = [
+        column
+        for column in required_case_columns
+        if column not in cases.columns
+    ]
+
+    missing_control_columns = [
+        column
+        for column in required_control_columns
+        if column not in controls.columns
+    ]
+
+    if missing_case_columns:
+        raise ValueError(
+            f"Case dataset is missing columns: {missing_case_columns}"
+        )
+
+    if missing_control_columns:
+        raise ValueError(
+            f"Control pool is missing columns: {missing_control_columns}"
+        )
+
+    cases = cases.copy()
+    controls = controls.copy()
+
+    cases["case_id"] = cases["case_id"].astype(str)
+    cases["match_id"] = cases["match_id"].astype(str)
+    cases["participant_id"] = pd.to_numeric(
+        cases["participant_id"],
+        errors="coerce",
+    )
+    cases["purchase_timestamp"] = pd.to_numeric(
+        cases["purchase_timestamp"],
+        errors="coerce",
+    )
+
+    controls["case_id"] = controls["case_id"].astype(str)
+    controls["control_match_id"] = controls["control_match_id"].astype(str)
+    controls["control_participant_id"] = pd.to_numeric(
+        controls["control_participant_id"],
+        errors="coerce",
+    )
+    controls["control_snapshot_timestamp"] = pd.to_numeric(
+        controls["control_snapshot_timestamp"],
+        errors="coerce",
+    )
+
+    if cases[["participant_id", "purchase_timestamp"]].isna().any(axis=None):
+        raise ValueError(
+            "Case dataset contains invalid participant IDs or purchase timestamps"
+        )
+
+    if controls[
+        ["control_participant_id", "control_snapshot_timestamp"]
+    ].isna().any(axis=None):
+        raise ValueError(
+            "Control pool contains invalid participant IDs or observation timestamps"
+        )
+
+    cases["participant_id"] = cases["participant_id"].astype(int)
+    cases["purchase_timestamp"] = cases["purchase_timestamp"].astype(int)
+    controls["control_participant_id"] = controls[
+        "control_participant_id"
+    ].astype(int)
+    controls["control_snapshot_timestamp"] = controls[
+        "control_snapshot_timestamp"
+    ].astype(int)
+
+    return cases, controls
 
 
-def parse_assist_ids(value) -> list[int]:
-    """Return assist IDs from arrays, lists, JSON strings, or scalar values."""
+def make_observation_id(match_ids, participant_ids, timestamps):
+    return (
+        match_ids.astype(str)
+        + "_"
+        + participant_ids.astype(int).astype(str)
+        + "_"
+        + timestamps.astype(int).astype(str)
+    )
+
+
+def build_observations(cases, controls):
+    case_observations = cases[
+        [
+            "match_id",
+            "participant_id",
+            "purchase_timestamp",
+        ]
+    ].copy()
+
+    case_observations = case_observations.rename(
+        columns={
+            "purchase_timestamp": "observation_timestamp",
+        }
+    )
+
+    control_observations = controls[
+        [
+            "control_match_id",
+            "control_participant_id",
+            "control_snapshot_timestamp",
+        ]
+    ].copy()
+
+    control_observations = control_observations.rename(
+        columns={
+            "control_match_id": "match_id",
+            "control_participant_id": "participant_id",
+            "control_snapshot_timestamp": "observation_timestamp",
+        }
+    )
+
+    observations = pd.concat(
+        [
+            case_observations,
+            control_observations,
+        ],
+        ignore_index=True,
+    )
+
+    observations["observation_id"] = make_observation_id(
+        observations["match_id"],
+        observations["participant_id"],
+        observations["observation_timestamp"],
+    )
+
+    observations = observations.drop_duplicates(
+        subset=["observation_id"]
+    ).reset_index(drop=True)
+
+    return observations
+
+
+def find_event_files():
+    event_directory = PARQUET_DIR / "events"
+
+    if not event_directory.exists():
+        raise FileNotFoundError(
+            f"Event directory not found: {event_directory}"
+        )
+
+    files = sorted(
+        event_directory.glob("*_part_*.parquet")
+    )
+
+    if not files:
+        raise FileNotFoundError(
+            f"No event Parquet files found in {event_directory}"
+        )
+
+    return files
+
+
+def parse_assist_ids(value):
     if value is None:
         return []
 
-    if isinstance(value, (list, tuple, set, np.ndarray, pd.Series)):
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+            set,
+            np.ndarray,
+            pd.Series,
+        ),
+    ):
         raw_values = list(value)
+
     elif isinstance(value, str):
         stripped = value.strip()
-        if not stripped or stripped.lower() in {"none", "nan", "null", "[]"}:
+
+        if not stripped or stripped.lower() in {
+            "none",
+            "nan",
+            "null",
+            "[]",
+        }:
             return []
 
         try:
@@ -90,531 +264,518 @@ def parse_assist_ids(value) -> list[int]:
                 for part in stripped.replace("[", "").replace("]", "").split(",")
                 if part.strip()
             ]
+
     else:
         try:
             if pd.isna(value):
                 return []
         except Exception:
             pass
+
         raw_values = [value]
 
-    output = []
-    for raw in raw_values:
+    participant_ids = []
+
+    for raw_value in raw_values:
         try:
-            participant_id = int(float(raw))
+            participant_id = int(float(raw_value))
         except (TypeError, ValueError):
             continue
 
         if participant_id > 0:
-            output.append(participant_id)
+            participant_ids.append(participant_id)
 
-    return output
-
-
-def count_before(timestamps: np.ndarray, observation_timestamp: int) -> int:
-    """Count events strictly before the observation time."""
-    if len(timestamps) == 0:
-        return 0
-
-    return int(np.searchsorted(timestamps, observation_timestamp, side="left"))
+    return participant_ids
 
 
-def count_in_recent_window(
-    timestamps: np.ndarray, observation_timestamp: int
-) -> int:
-    """Count events in [observation - 5 minutes, observation)."""
-    if len(timestamps) == 0:
-        return 0
-
-    left = np.searchsorted(
-        timestamps, observation_timestamp - RECENT_WINDOW_MS, side="left"
-    )
-    right = np.searchsorted(timestamps, observation_timestamp, side="left")
-    return int(right - left)
-
-
-def last_before(timestamps: np.ndarray, observation_timestamp: int) -> float:
-    """Return the latest event timestamp strictly before observation."""
-    if len(timestamps) == 0:
-        return np.nan
-
-    position = np.searchsorted(timestamps, observation_timestamp, side="left") - 1
-    return float(timestamps[position]) if position >= 0 else np.nan
-
-
-def get_array(mapping, key) -> np.ndarray:
-    return mapping.get(key, np.empty(0, dtype=np.int64))
-
-
-def append_timestamp(mapping, key, timestamp) -> None:
+def add_timestamp(mapping, key, timestamp):
     mapping[key].append(int(timestamp))
 
 
-# ============================================================
-# MATCHED DATA
-# ============================================================
-
-def load_matched_dataset(path: Path, sample_name: str) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"{sample_name} input not found: {path}")
-
-    df = pd.read_parquet(path)
-    required = [
-        "matched_set_id",
-        "case_id",
-        "treatment",
-        "match_id",
-        "participant_id",
-        "observation_timestamp",
-        "outcome_win",
-        "matching_weight",
-    ]
-    missing = [column for column in required if column not in df.columns]
-    if missing:
-        raise ValueError(f"{sample_name} is missing required columns: {missing}")
-
-    df = df.copy()
-    df["match_id"] = df["match_id"].astype(str)
-    df["participant_id"] = pd.to_numeric(df["participant_id"], errors="coerce")
-    df["observation_timestamp"] = pd.to_numeric(
-        df["observation_timestamp"], errors="coerce"
-    )
-    df = df.dropna(
-        subset=["match_id", "participant_id", "observation_timestamp"]
-    )
-    df["participant_id"] = df["participant_id"].astype(int)
-    df["observation_timestamp"] = df["observation_timestamp"].astype(int)
-
-    return df.reset_index(drop=True)
-
-
-def build_observation_table(sensitivity: pd.DataFrame) -> pd.DataFrame:
-    observations = sensitivity[
-        ["match_id", "participant_id", "observation_timestamp"]
-    ].drop_duplicates(
-        subset=["match_id", "participant_id", "observation_timestamp"]
-    )
-    observations = observations.reset_index(drop=True)
-    observations["observation_id"] = (
-        observations["match_id"].astype(str)
-        + "_"
-        + observations["participant_id"].astype(str)
-        + "_"
-        + observations["observation_timestamp"].astype(str)
-    )
-
-    return observations
-
-
-# ============================================================
-# EVENT FILE DISCOVERY
-# ============================================================
-
-def discover_event_files() -> list[Path]:
-    if AUDIT_INVENTORY_FILE.exists():
-        inventory = pd.read_csv(AUDIT_INVENTORY_FILE)
-
-        if {"path", "table_type"}.issubset(inventory.columns):
-            paths = (
-                inventory.loc[inventory["table_type"] == "events", "path"]
-                .dropna()
-                .astype(str)
-                .map(Path)
-                .tolist()
-            )
-            existing = sorted(path for path in paths if path.exists())
-            if existing:
-                return existing
-
-    if not PARQUET_ROOT.exists():
-        raise FileNotFoundError(f"Parquet root not found: {PARQUET_ROOT}")
-
-    paths = sorted(
-        path
-        for path in PARQUET_ROOT.rglob("*.parquet")
-        if "event" in str(path).lower() or "timeline" in str(path).lower()
-    )
-    if not paths:
-        raise FileNotFoundError("No event parquet files found")
-
-    return paths
-
-
-def parquet_columns(path: Path) -> list[str]:
-    try:
-        import pyarrow.parquet as pq
-
-        return [field.name for field in pq.ParquetFile(path).schema_arrow]
-    except Exception:
-        return list(pd.read_parquet(path).head(0).columns)
-
-
-def select_event_columns(available_columns):
-    selected = {
-        canonical: first_existing(available_columns, candidates)
-        for canonical, candidates in ALIASES.items()
-    }
-
-    if any(selected[name] is None for name in ("match_id", "event_type", "timestamp")):
-        return selected, []
-
-    actual_columns = sorted(
-        {column for column in selected.values() if column is not None}
-    )
-    return selected, actual_columns
-
-
-# ============================================================
-# EVENT LOADING
-# ============================================================
-
-def normalize_event_frame(raw: pd.DataFrame, selected: dict) -> pd.DataFrame:
-    rename_map = {
-        actual: canonical
-        for canonical, actual in selected.items()
-        if actual is not None
-    }
-    events = raw.rename(columns=rename_map).copy()
-
-    events["match_id"] = events["match_id"].astype(str)
-    events["event_type"] = events["event_type"].astype(str).str.strip().str.upper()
-    events["timestamp"] = pd.to_numeric(events["timestamp"], errors="coerce")
-    events = events.dropna(subset=["match_id", "event_type", "timestamp"])
-    events["timestamp"] = events["timestamp"].astype(int)
-
-    for column in ["participant_id", "killer_id", "victim_id", "item_id"]:
-        if column not in events.columns:
-            events[column] = np.nan
-        events[column] = pd.to_numeric(events[column], errors="coerce")
-
-    if "assisting_ids" not in events.columns:
-        events["assisting_ids"] = None
-
-    # Tuples preserve assist IDs and remain hashable for drop_duplicates().
-    events["assisting_ids"] = events["assisting_ids"].map(
-        lambda value: tuple(parse_assist_ids(value))
-    )
-
-    return events
-
-
-def load_relevant_events(
-    event_files: list[Path], relevant_match_ids: set[str]
-) -> pd.DataFrame:
-    relevant_match_ids = set(map(str, relevant_match_ids))
-    frames = []
-    retained_rows = 0
-    skipped = 0
-
-    for index, path in enumerate(event_files, start=1):
-        try:
-            available = parquet_columns(path)
-            selected, columns = select_event_columns(available)
-            if not columns:
-                skipped += 1
-                continue
-
-            raw = pd.read_parquet(path, columns=columns)
-            match_column = selected["match_id"]
-            raw = raw[raw[match_column].astype(str).isin(relevant_match_ids)]
-            if raw.empty:
-                continue
-
-            events = normalize_event_frame(raw, selected)
-            retained_rows += len(events)
-            frames.append(events)
-
-        except Exception as error:
-            warnings.warn(f"Could not process event file {path}: {error}")
-
-        if index % LOG_EVERY_FILES == 0 or index == len(event_files):
-            log(
-                f"Event files processed: {index:,} / {len(event_files):,} | "
-                f"retained rows: {retained_rows:,}"
-            )
-
-    if not frames:
-        raise ValueError("No relevant event rows were loaded")
-
-    events = pd.concat(frames, ignore_index=True)
-    events = events.drop_duplicates().sort_values(
-        ["match_id", "timestamp"], kind="stable"
-    )
-    events = events.reset_index(drop=True)
-
-    log(f"Relevant events loaded: {len(events):,}")
-    if skipped:
-        log(f"Event files skipped for missing required columns: {skipped:,}")
-
-    return events
-
-
-# ============================================================
-# COMPACT EVENT INDEX
-# ============================================================
-
-def build_event_index(events: pd.DataFrame) -> dict:
+def build_event_index(event_files, relevant_match_ids):
     kills = defaultdict(list)
     deaths = defaultdict(list)
     assists = defaultdict(list)
     dark_seal_purchases = defaultdict(list)
 
-    champion_kills = events[events["event_type"] == "CHAMPION_KILL"]
-    for row in champion_kills.itertuples(index=False):
-        match_id = str(row.match_id)
-        timestamp = int(row.timestamp)
+    relevant_match_ids = {
+        str(match_id)
+        for match_id in relevant_match_ids
+    }
 
-        if not pd.isna(row.killer_id) and int(row.killer_id) > 0:
-            append_timestamp(kills, (match_id, int(row.killer_id)), timestamp)
+    columns = [
+        "match_id",
+        "event_type",
+        "timestamp",
+        "participant_id",
+        "killer_id",
+        "victim_id",
+        "assisting_ids",
+        "item_id",
+    ]
 
-        if not pd.isna(row.victim_id) and int(row.victim_id) > 0:
-            append_timestamp(deaths, (match_id, int(row.victim_id)), timestamp)
+    retained_rows = 0
 
-        for assist_id in parse_assist_ids(row.assisting_ids):
-            append_timestamp(assists, (match_id, assist_id), timestamp)
+    for file_number, filepath in enumerate(event_files, start=1):
+        try:
+            events = pd.read_parquet(
+                filepath,
+                columns=columns,
+                engine="pyarrow",
+            )
+        except Exception as error:
+            raise RuntimeError(
+                f"Could not read event file {filepath}: {error}"
+            ) from error
 
-    purchases = events[events["event_type"] == "ITEM_PURCHASED"]
-    for row in purchases.itertuples(index=False):
-        if pd.isna(row.participant_id) or pd.isna(row.item_id):
+        events["match_id"] = events["match_id"].astype(str)
+        events = events[
+            events["match_id"].isin(relevant_match_ids)
+        ]
+
+        if events.empty:
             continue
 
-        participant_id = int(row.participant_id)
-        if participant_id <= 0 or int(row.item_id) != DARK_SEAL_ITEM_ID:
-            continue
-
-        append_timestamp(
-            dark_seal_purchases,
-            (str(row.match_id), participant_id),
-            int(row.timestamp),
+        events["event_type"] = (
+            events["event_type"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
         )
 
-    mappings = {
+        events["timestamp"] = pd.to_numeric(
+            events["timestamp"],
+            errors="coerce",
+        )
+
+        events = events.dropna(
+            subset=[
+                "match_id",
+                "event_type",
+                "timestamp",
+            ]
+        )
+
+        events["timestamp"] = events["timestamp"].astype(int)
+        retained_rows += len(events)
+
+        champion_kills = events[
+            events["event_type"] == "CHAMPION_KILL"
+        ]
+
+        for event in champion_kills.itertuples(index=False):
+            match_id = str(event.match_id)
+            timestamp = int(event.timestamp)
+
+            if pd.notna(event.killer_id) and int(event.killer_id) > 0:
+                add_timestamp(
+                    kills,
+                    (match_id, int(event.killer_id)),
+                    timestamp,
+                )
+
+            if pd.notna(event.victim_id) and int(event.victim_id) > 0:
+                add_timestamp(
+                    deaths,
+                    (match_id, int(event.victim_id)),
+                    timestamp,
+                )
+
+            for assist_id in parse_assist_ids(event.assisting_ids):
+                add_timestamp(
+                    assists,
+                    (match_id, assist_id),
+                    timestamp,
+                )
+
+        purchases = events[
+            events["event_type"] == "ITEM_PURCHASED"
+        ]
+
+        for event in purchases.itertuples(index=False):
+            if pd.isna(event.participant_id) or pd.isna(event.item_id):
+                continue
+
+            participant_id = int(event.participant_id)
+
+            if participant_id <= 0 or int(event.item_id) != DARK_SEAL_ITEM_ID:
+                continue
+
+            add_timestamp(
+                dark_seal_purchases,
+                (str(event.match_id), participant_id),
+                int(event.timestamp),
+            )
+
+        if file_number % LOG_EVERY_FILES == 0 or file_number == len(event_files):
+            log(
+                f"Event files processed: {file_number:,} / {len(event_files):,} | "
+                f"retained rows: {retained_rows:,}"
+            )
+
+    event_index = {
         "kills": kills,
         "deaths": deaths,
         "assists": assists,
         "dark_seal_purchases": dark_seal_purchases,
     }
 
-    for mapping in mappings.values():
-        for key, values in mapping.items():
-            mapping[key] = np.sort(np.asarray(values, dtype=np.int64))
+    for mapping in event_index.values():
+        for key, timestamps in mapping.items():
+            mapping[key] = np.sort(
+                np.asarray(timestamps, dtype=np.int64)
+            )
 
-    return mappings
+    return event_index
 
 
-# ============================================================
-# COMPACT FEATURE CONSTRUCTION
-# ============================================================
+def get_timestamps(mapping, key):
+    return mapping.get(
+        key,
+        np.empty(0, dtype=np.int64),
+    )
 
-def derive_observation_features(
-    observations: pd.DataFrame, event_index: dict
-) -> pd.DataFrame:
-    """
-    Build only the compact event-derived state needed by the revised analysis.
 
-    Economic carry state is intentionally handled elsewhere. This script only
-    provides:
-      - Dark Seal eligibility/history
-      - recent five-minute kills, deaths, and assists
-      - time since the player's last death
+def count_before(timestamps, observation_timestamp):
+    return int(
+        np.searchsorted(
+            timestamps,
+            observation_timestamp,
+            side="left",
+        )
+    )
 
-    Every event must occur strictly before the observation timestamp.
-    """
+
+def count_in_recent_window(timestamps, observation_timestamp):
+    window_start = observation_timestamp - RECENT_WINDOW_MS
+
+    left = np.searchsorted(
+        timestamps,
+        window_start,
+        side="left",
+    )
+
+    right = np.searchsorted(
+        timestamps,
+        observation_timestamp,
+        side="left",
+    )
+
+    return int(right - left)
+
+
+def build_features(observations, event_index):
     rows = []
 
-    for number, row in enumerate(observations.itertuples(index=False), start=1):
-        match_id = str(row.match_id)
-        participant_id = int(row.participant_id)
-        timestamp = int(row.observation_timestamp)
-        player_key = (match_id, participant_id)
+    for number, observation in enumerate(
+        observations.itertuples(index=False),
+        start=1,
+    ):
+        match_id = str(observation.match_id)
+        participant_id = int(observation.participant_id)
+        observation_timestamp = int(observation.observation_timestamp)
+        key = (match_id, participant_id)
 
-        kills = get_array(event_index["kills"], player_key)
-        deaths = get_array(event_index["deaths"], player_key)
-        assists = get_array(event_index["assists"], player_key)
-        dark_seal_purchases = get_array(
-            event_index["dark_seal_purchases"], player_key
+        kills = get_timestamps(event_index["kills"], key)
+        deaths = get_timestamps(event_index["deaths"], key)
+        assists = get_timestamps(event_index["assists"], key)
+        dark_seal_purchases = get_timestamps(
+            event_index["dark_seal_purchases"],
+            key,
         )
-        last_death = last_before(deaths, timestamp)
 
         rows.append(
             {
-                "observation_id": row.observation_id,
-                "purchase_time_minutes": timestamp / 60_000.0,
+                "observation_id": observation.observation_id,
                 "dark_seal_purchased_before_observation": int(
-                    count_before(dark_seal_purchases, timestamp) > 0
+                    count_before(
+                        dark_seal_purchases,
+                        observation_timestamp,
+                    ) > 0
                 ),
-                "kills_last_5m": count_in_recent_window(kills, timestamp),
-                "deaths_last_5m": count_in_recent_window(deaths, timestamp),
-                "assists_last_5m": count_in_recent_window(assists, timestamp),
-                "seconds_since_last_death": (
-                    (timestamp - last_death) / 1000.0
-                    if not np.isnan(last_death)
-                    else np.nan
+                "kills_last_5m": count_in_recent_window(
+                    kills,
+                    observation_timestamp,
+                ),
+                "deaths_last_5m": count_in_recent_window(
+                    deaths,
+                    observation_timestamp,
+                ),
+                "assists_last_5m": count_in_recent_window(
+                    assists,
+                    observation_timestamp,
                 ),
             }
         )
 
         if number % 10_000 == 0 or number == len(observations):
-            log(f"Observations featured: {number:,} / {len(observations):,}")
+            log(
+                f"Observations featured: {number:,} / {len(observations):,}"
+            )
 
     return pd.DataFrame(rows)
 
 
-# ============================================================
-# MERGE, VALIDATION, AND DIAGNOSTICS
-# ============================================================
+def enrich_cases(cases, features):
+    output = cases.copy()
 
-def attach_features(matched: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
-    enriched = matched.copy()
-    enriched["observation_id"] = (
-        enriched["match_id"].astype(str)
-        + "_"
-        + enriched["participant_id"].astype(int).astype(str)
-        + "_"
-        + enriched["observation_timestamp"].astype(int).astype(str)
+    output["observation_id"] = make_observation_id(
+        output["match_id"],
+        output["participant_id"],
+        output["purchase_timestamp"],
     )
 
-    original_rows = len(enriched)
-    enriched = enriched.merge(
-        features, on="observation_id", how="left", validate="many_to_one"
+    original_rows = len(output)
+
+    output = output.merge(
+        features,
+        on="observation_id",
+        how="left",
+        validate="many_to_one",
     )
 
-    if len(enriched) != original_rows:
-        raise ValueError("Feature merge changed row count")
+    if len(output) != original_rows:
+        raise ValueError("Case feature merge changed row count")
 
-    return enriched
-
-
-def validate_features(enriched: pd.DataFrame) -> None:
-    required = [
-        "purchase_time_minutes",
-        "dark_seal_purchased_before_observation",
-        "kills_last_5m",
-        "deaths_last_5m",
-        "assists_last_5m",
-        "seconds_since_last_death",
-    ]
-    missing = [column for column in required if column not in enriched.columns]
-    if missing:
-        raise ValueError(f"Missing constructed features: {missing}")
-
-    complete_features = [
-        "purchase_time_minutes",
-        "dark_seal_purchased_before_observation",
-        "kills_last_5m",
-        "deaths_last_5m",
-        "assists_last_5m",
-    ]
-    if enriched[complete_features].isna().any(axis=None):
-        raise ValueError("Unexpected missing values in complete compact features")
-
-    for column in [
-        "dark_seal_purchased_before_observation",
-        "kills_last_5m",
-        "deaths_last_5m",
-        "assists_last_5m",
-    ]:
-        numeric = pd.to_numeric(enriched[column], errors="coerce")
-        if (numeric < 0).any():
-            raise ValueError(f"Negative value found in {column}")
+    return output.drop(columns=["observation_id"])
 
 
-def build_diagnostics(sensitivity: pd.DataFrame) -> pd.DataFrame:
-    features = [
-        "purchase_time_minutes",
-        "dark_seal_purchased_before_observation",
-        "kills_last_5m",
-        "deaths_last_5m",
-        "assists_last_5m",
-        "seconds_since_last_death",
-    ]
+def enrich_controls(controls, enriched_cases, features):
+    output = controls.copy()
 
-    rows = []
-    for feature in features:
-        numeric = pd.to_numeric(sensitivity[feature], errors="coerce")
-        rows.append(
-            {
-                "feature": feature,
-                "non_missing_count": int(numeric.notna().sum()),
-                "non_missing_ratio": float(numeric.notna().mean()),
-                "mean": float(numeric.mean()) if numeric.notna().any() else np.nan,
-                "std": float(numeric.std()) if numeric.notna().any() else np.nan,
-                "minimum": float(numeric.min()) if numeric.notna().any() else np.nan,
-                "maximum": float(numeric.max()) if numeric.notna().any() else np.nan,
-            }
+    mejai_features = enriched_cases[
+        [
+            "case_id",
+            *FEATURE_COLUMNS,
+        ]
+    ].copy()
+
+    mejai_features = mejai_features.rename(
+        columns={
+            column: f"mejai_{column}"
+            for column in FEATURE_COLUMNS
+        }
+    )
+
+    original_rows = len(output)
+
+    output = output.merge(
+        mejai_features,
+        on="case_id",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if len(output) != original_rows:
+        raise ValueError(
+            "Case-side feature merge changed control-pool row count"
         )
 
-    return pd.DataFrame(rows)
-
-
-def print_summary(
-    primary: pd.DataFrame, sensitivity: pd.DataFrame, diagnostics: pd.DataFrame
-) -> None:
-    log("")
-    log("=" * 76)
-    log("COMPACT PURCHASE DECISION FEATURE SUMMARY")
-    log("=" * 76)
-    log(f"Primary rows: {len(primary):,}")
-    log(f"Sensitivity rows: {len(sensitivity):,}")
-    log(f"Derived feature columns: {len(diagnostics):,}")
-    log("")
-    log("Feature coverage:")
-
-    display = diagnostics[
-        ["feature", "non_missing_ratio", "mean", "minimum", "maximum"]
-    ].copy()
-    display["non_missing_ratio"] = display["non_missing_ratio"].map(
-        lambda value: f"{value:.2%}"
+    output["observation_id"] = make_observation_id(
+        output["control_match_id"],
+        output["control_participant_id"],
+        output["control_snapshot_timestamp"],
     )
-    log(display.to_string(index=False))
+
+    control_features = features.rename(
+        columns={
+            column: f"control_{column}"
+            for column in FEATURE_COLUMNS
+        }
+    )
+
+    output = output.merge(
+        control_features,
+        on="observation_id",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if len(output) != original_rows:
+        raise ValueError(
+            "Control-side feature merge changed control-pool row count"
+        )
+
+    return output.drop(columns=["observation_id"])
 
 
-# ============================================================
-# MAIN
-# ============================================================
+def validate_outputs(
+    original_cases,
+    original_controls,
+    enriched_cases,
+    enriched_controls,
+):
+    if len(enriched_cases) != len(original_cases):
+        raise ValueError("Enriched case row count changed")
 
-def main() -> None:
-    log("=" * 76)
-    log("BUILD COMPACT PURCHASE DECISION FEATURES")
-    log("=" * 76)
+    if len(enriched_controls) != len(original_controls):
+        raise ValueError("Enriched control row count changed")
 
-    primary = load_matched_dataset(PRIMARY_INPUT, "primary")
-    sensitivity = load_matched_dataset(SENSITIVITY_INPUT, "sensitivity")
+    case_features = FEATURE_COLUMNS
+    control_features = [
+        f"control_{column}"
+        for column in FEATURE_COLUMNS
+    ]
+    mejai_features = [
+        f"mejai_{column}"
+        for column in FEATURE_COLUMNS
+    ]
 
-    log(f"Primary rows loaded: {len(primary):,}")
-    log(f"Sensitivity rows loaded: {len(sensitivity):,}")
+    if enriched_cases[case_features].isna().any(axis=None):
+        raise ValueError("Missing event features in enriched cases")
 
-    observations = build_observation_table(sensitivity)
+    if enriched_controls[control_features].isna().any(axis=None):
+        raise ValueError(
+            "Missing control event features in enriched control pool"
+        )
+
+    if enriched_controls[mejai_features].isna().any(axis=None):
+        raise ValueError(
+            "Missing Mejai-side event features in enriched control pool"
+        )
+
+    for column in FEATURE_COLUMNS:
+        if (enriched_cases[column] < 0).any():
+            raise ValueError(f"Negative value found in {column}")
+
+    for prefix in ["mejai_", "control_"]:
+        for column in FEATURE_COLUMNS:
+            full_column = prefix + column
+
+            if (enriched_controls[full_column] < 0).any():
+                raise ValueError(
+                    f"Negative value found in {full_column}"
+                )
+
+    for dataframe, column in [
+        (
+            enriched_cases,
+            "dark_seal_purchased_before_observation",
+        ),
+        (
+            enriched_controls,
+            "mejai_dark_seal_purchased_before_observation",
+        ),
+        (
+            enriched_controls,
+            "control_dark_seal_purchased_before_observation",
+        ),
+    ]:
+        if not dataframe[column].isin([0, 1]).all():
+            raise ValueError(
+                f"{column} contains values other than 0 or 1"
+            )
+
+
+def print_summary(enriched_cases, enriched_controls):
+    log("")
+    log("=" * 70)
+    log("PURCHASE DECISION FEATURE SUMMARY")
+    log("=" * 70)
+    log(f"Enriched case rows: {len(enriched_cases):,}")
+    log(f"Enriched control rows: {len(enriched_controls):,}")
+
+    log("")
+    log("Case feature averages:")
+    log(
+        enriched_cases[
+            FEATURE_COLUMNS
+        ].mean().to_string()
+    )
+
+    log("")
+    log("Control feature averages:")
+    log(
+        enriched_controls[
+            [
+                f"control_{column}"
+                for column in FEATURE_COLUMNS
+            ]
+        ].mean().to_string()
+    )
+
+
+def save_outputs(enriched_cases, enriched_controls):
+    CASE_OUTPUT.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    enriched_cases.to_parquet(
+        CASE_OUTPUT,
+        index=False,
+        engine="pyarrow",
+    )
+
+    enriched_controls.to_parquet(
+        CONTROL_OUTPUT,
+        index=False,
+        engine="pyarrow",
+    )
+
+    log("")
+    log(f"[SAVED] {CASE_OUTPUT}")
+    log(f"[SAVED] {CONTROL_OUTPUT}")
+
+
+def main():
+    log("=" * 70)
+    log("BUILD PURCHASE DECISION FEATURES")
+    log("=" * 70)
+
+    cases, controls = load_inputs()
+
+    log(f"Case rows loaded: {len(cases):,}")
+    log(f"Control candidate rows loaded: {len(controls):,}")
+
+    observations = build_observations(cases, controls)
     log(f"Unique observations to feature: {len(observations):,}")
 
-    event_files = discover_event_files()
-    log(f"Event parquet files found: {len(event_files):,}")
+    event_files = find_event_files()
+    log(f"Event files found: {len(event_files):,}")
 
     relevant_match_ids = set(observations["match_id"])
-    events = load_relevant_events(event_files, relevant_match_ids)
-    event_index = build_event_index(events)
-    del events
 
-    features = derive_observation_features(observations, event_index)
-    primary_enriched = attach_features(primary, features)
-    sensitivity_enriched = attach_features(sensitivity, features)
+    event_index = build_event_index(
+        event_files,
+        relevant_match_ids,
+    )
 
-    validate_features(primary_enriched)
-    validate_features(sensitivity_enriched)
-    diagnostics = build_diagnostics(sensitivity_enriched)
-    print_summary(primary_enriched, sensitivity_enriched, diagnostics)
+    features = build_features(
+        observations,
+        event_index,
+    )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    primary_enriched.to_parquet(PRIMARY_OUTPUT, index=False)
-    sensitivity_enriched.to_parquet(SENSITIVITY_OUTPUT, index=False)
-    diagnostics.to_csv(DIAGNOSTICS_OUTPUT, index=False)
+    enriched_cases = enrich_cases(
+        cases,
+        features,
+    )
+
+    enriched_controls = enrich_controls(
+        controls,
+        enriched_cases,
+        features,
+    )
+
+    validate_outputs(
+        cases,
+        controls,
+        enriched_cases,
+        enriched_controls,
+    )
+
+    print_summary(
+        enriched_cases,
+        enriched_controls,
+    )
+
+    save_outputs(
+        enriched_cases,
+        enriched_controls,
+    )
 
     log("")
-    log(f"[SAVED] {PRIMARY_OUTPUT}")
-    log(f"[SAVED] {SENSITIVITY_OUTPUT}")
-    log(f"[SAVED] {DIAGNOSTICS_OUTPUT}")
-    log("")
-    log("[PASSED] COMPACT PURCHASE DECISION FEATURES CONSTRUCTED")
+    log("[PASSED] PURCHASE DECISION FEATURES CONSTRUCTED")
 
 
 if __name__ == "__main__":

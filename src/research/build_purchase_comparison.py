@@ -929,7 +929,7 @@ def main():
 
     log("")
     log("Loading Mejai case data...")
-    case_data = load_research_raw_data(lifecycles)
+    case_data = load_research_raw_data(lifecycles, include_events=False)
 
     if not case_data:
         log("[ERROR] No Mejai case data loaded")
