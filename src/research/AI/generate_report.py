@@ -498,12 +498,33 @@ Clearly label the lifecycle split as post-purchase and descriptive.
 
 # Questions the AI analyst could answer next
 
-Give exactly three questions that can be answered directly from the supplied
-outcome-summary or balance tables. Do not propose new variables, new models,
-or analyses requiring raw event data.
+Give exactly these three grounded questions:
+
+1. Which team-state subgroup has the largest matched win-rate difference?
+2. How does the matched difference vary across the three purchase-time groups?
+3. Which pre-purchase covariates have the largest remaining imbalance?
+
+- Compare the numeric risk differences before identifying the largest or
+  strongest subgroup. In the supplied team-state evidence, close is largest,
+  behind is second, and ahead is smallest. Do not describe ahead as strongest.
+
+- In the supplied player-state evidence, close is largest, ahead is second,
+  and behind is smallest.
+
+- Do not claim that purchase-timing groups are statistically different from
+  one another. No pairwise timing comparison was performed. Only describe
+  their numerical pattern.
+
+- For lifecycle results, explicitly state that retaining Mejai did not
+  necessarily cause wins and selling Mejai did not necessarily cause losses.
+  Lifecycle status is post-purchase and may reflect subsequent game events.
+
+- Avoid the phrases "statistically significant", "statistically distinct",
+  "effective", "benefit", and "timing effect".
 
 Structured evidence:
 {evidence}
+
 """.strip()
 
 
