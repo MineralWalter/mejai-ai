@@ -23,8 +23,9 @@ V2_ENRICHED_DIR = ANALYSIS_DIR / "generalized_candidate_pool"
 V2_MATCHING_DIR = ANALYSIS_DIR / "generalized_matching"
 V2_OUTCOME_DIR = ANALYSIS_DIR / "generalized_outcome"
 
-V2_CASE_ENRICHED = V2_ENRICHED_DIR / "mejai_cases_enriched.parquet"
-V2_CONTROL_ENRICHED = V2_ENRICHED_DIR / "mejai_controls_enriched.parquet"
+V2_CASE_ENRICHED = ANALYSIS_DIR/ "mejai_research_dataset_event_enriched.parquet"
+
+V2_CONTROL_ENRICHED = ANALYSIS_DIR/ "mejai_control_candidate_pool_generalized_event_enriched.parquet"
 V2_COMBINED_ENRICHED = V2_ENRICHED_DIR / "mejai_candidate_pool_enriched.parquet"
 
 PRIMARY_STATUSES = {"RETAINED", "SOLD"}

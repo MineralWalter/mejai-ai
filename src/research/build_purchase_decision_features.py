@@ -8,9 +8,10 @@ import pandas as pd
 from src.research.config import (
     CASE_DATASET,
     PARQUET_DIR,
+    V2_CASE_ENRICHED,
+    V2_CONTROL_ENRICHED,
     V2_CONTROL_POOL,
 )
-
 
 RECENT_WINDOW_MS = 5 * 60 * 1000
 DARK_SEAL_ITEM_ID = 1082
@@ -22,17 +23,6 @@ FEATURE_COLUMNS = [
     "deaths_last_5m",
     "assists_last_5m",
 ]
-
-CASE_OUTPUT = (
-    CASE_DATASET.parent
-    / "mejai_research_dataset_event_enriched.parquet"
-)
-
-CONTROL_OUTPUT = (
-    V2_CONTROL_POOL.parent
-    / "mejai_control_candidate_pool_generalized_event_enriched.parquet"
-)
-
 
 def log(message=""):
     print(message)
@@ -696,26 +686,26 @@ def print_summary(enriched_cases, enriched_controls):
 
 
 def save_outputs(enriched_cases, enriched_controls):
-    CASE_OUTPUT.parent.mkdir(
+    V2_CASE_ENRICHED.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
     enriched_cases.to_parquet(
-        CASE_OUTPUT,
+        V2_CASE_ENRICHED,
         index=False,
         engine="pyarrow",
     )
 
     enriched_controls.to_parquet(
-        CONTROL_OUTPUT,
+        V2_CONTROL_ENRICHED,
         index=False,
         engine="pyarrow",
     )
 
     log("")
-    log(f"[SAVED] {CASE_OUTPUT}")
-    log(f"[SAVED] {CONTROL_OUTPUT}")
+    log(f"[SAVED] {V2_CASE_ENRICHED}")
+    log(f"[SAVED] {V2_CONTROL_ENRICHED}")
 
 
 def main():
