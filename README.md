@@ -1,8 +1,8 @@
-# Mejai's Soulstealer: Win-More Item or Comeback Gamble?
+# Analysing High-Risk, High-Reward Game Decisions Using Matched Game States
 
-An observational League of Legends data project examining whether **Mejai's Soulstealer** is mainly associated with already-strong game states, or whether positive matched win-rate differences also appear when the buyer's team is close or behind.
+An observational League of Legends data project examining whether **Mejai's Soulstealer** is mainly associated with already-winning game states,or whether positive matched win-rate differences also appear when the buyer's team is losing.
 
-This repository covers the full workflow: Riot API collection, timeline extraction, purchase-lifecycle reconstruction, purchase-time feature engineering, matched observational analysis, balance and robustness validation, and a constrained local-LLM analyst for post-primary exploratory follow-up.
+This repository covers an AI-guided research workflow, combining a constrained LLM  with  Python analysis. It also includes data collection via Riot API, timeline extraction, purchase-lifecycle reconstruction, feature engineering, matched observational analysis, and balance and robustness validation. The LLM selects bounded exploratory follow-up questions from an approved statistical toolset, while Python validates actions and performs all numerical calculations.
 
 > **Important:** this is an observational study. Reported differences are associations within matched comparisons and should not be interpreted as causal effects of purchasing Mejai's Soulstealer.
 
@@ -10,7 +10,6 @@ This repository covers the full workflow: Riot API collection, timeline extracti
 
 ## Contents
 
-- [Research Question](#research-question)
 - [Project Overview](#project-overview)
 - [Dataset](#dataset)
 - [Research Design](#research-design)
@@ -26,20 +25,8 @@ This repository covers the full workflow: Riot API collection, timeline extracti
 - [Data Collection and Processing](#data-collection-and-processing)
 - [Reproducing the Analysis](#reproducing-the-analysis)
 - [Tracked Outputs](#tracked-outputs)
-- [Technical Stack](#technical-stack)
-- [Final Takeaway](#final-takeaway)
-
----
-
-## Research Question
-
-> **Is Mejai's Soulstealer primarily a "win-more" item, or is positive matched association also present in close and behind game states?**
-
-A simple buyer-versus-non-buyer win-rate comparison would be heavily confounded. Players are more likely to buy Mejai under particular game conditions, and those same conditions are strongly related to winning.
-
-The project therefore compares Mejai purchases with **matched non-purchase observations at similar moments and game states**, rather than treating every non-buyer as an equivalent control.
-
-The aim is not to estimate a causal treatment effect. The aim is to test whether the observed win-rate association remains after constructing more comparable purchase and non-purchase situations.
+- [Tech Stack](#technical-stack)
+- [Takeaway](#final-takeaway)
 
 ---
 
@@ -92,13 +79,12 @@ Auditable exploratory CSVs + trace
 
 ### Design principles
 
-The final project intentionally separates:
+The final project has 4 phases:
 
 1. **Data acquisition** — Riot API match and timeline collection.
 2. **Deterministic research pipeline** — event reconstruction, feature engineering, matching, validation, and outcome calculation.
 3. **AI-guided exploration** — a bounded local model chooses from a restricted set of follow-up analyses after the primary analysis is frozen.
-4. **Tracked evidence** — compact final CSV and text outputs under `reports/`, while large generated datasets remain local.
-
+4. **Tracked evidence** — compact final CSV and text outputs under `reports/`
 ---
 
 ## Dataset
@@ -113,7 +99,7 @@ The final project intentionally separates:
 | Reconstructed purchase lifecycles | 26,350 |
 | Primary eligible Mejai purchases | 25,416 |
 
-The collection strategy targeted **high-MMR Ranked Solo** games across multiple Riot routing regions. Match discovery began from regional seed accounts and expanded through participant relationships with checkpointed collection state.
+The collection strategy targeted **high-MMR Ranked Solo/Duo** games across multiple Riot servers: Vietnam, EU West, North America, Korea. Match discovery began from regional seed accounts and expanded through participant relationships with checkpointed collection state.
 
 ### Purchase lifecycle reconstruction
 
@@ -267,9 +253,7 @@ The result is positive in the final matched sample, but remains an **observation
 | Ahead | 13,983 | **+1.21 pp** |
 | Behind | 2,009 | **+8.28 pp** |
 
-The largest descriptive matched differences appear in **close** and **behind** team states rather than in the already-ahead group.
-
-This argues against interpreting the entire observed Mejai association as a simple "already winning by a lot" pattern. It does **not** show that buying Mejai causes a comeback.
+The largest descriptive matched differences appear in **close** and **behind** team states rather than in the already-ahead group. What this means is that it argues against interpreting the entire observed Mejai association as a simple "already winning by a lot" pattern; it does **not** show that buying Mejai causes a comeback.
 
 ### Player state
 
@@ -524,7 +508,7 @@ The strict primary design matches **82.59%** of eligible cases. Unmatched cases 
 
 ### High-MMR collection strategy
 
-The collection strategy targeted high-MMR Ranked Solo games. Results may not generalize directly to lower ranks, other queues, coordinated teams, or professional competition.
+The collection strategy targeted high-MMR Ranked Solo/Duo games, as players are likely to have more accurate itemization and decision-making. Results may not generalize directly to lower ranks, other queues, coordinated teams, or professional competition.
 
 ### Exploratory subgroup selection
 
@@ -898,8 +882,8 @@ Behind team state:  +8.28 pp
 Ahead team state:   +1.21 pp
 ```
 
-The result is consistent with a more nuanced interpretation than **"Mejai only looks good because it is bought while already winning."**
+These results suggest that Mejai's observed success is not explained solely by players purchasing it from already-dominant positions. In the matched sample, the largest descriptive win-rate differences instead appeared in close and behind team states, supporting a more nuanced interpretation than "Mejai only looks good because it is bought while already winning."
 
-At the same time, the study remains observational, contains measurable residual imbalance, and does not establish that purchasing Mejai itself causes a higher probability of winning.
+The bounded AI-guided exploratory analysis added further context by selecting cross-stratified follow-up analyses across game state and purchase timing. Those deterministic results showed similar patterns across several close and behind-state subgroups, while keeping the primary matched analysis unchanged.
 
-The AI component is deliberately secondary to the statistical design: it selects a small number of approved exploratory questions, while deterministic Python remains responsible for every reported numerical result.
+The conclusion remains observational: matching improves comparability between purchase and non-purchase situations, but residual imbalance and unmeasured factors remain. The project therefore supports an association between Mejai purchases and higher win rates across multiple game states, rather than a causal claim that purchasing Mejai itself increases the probability of winning.
