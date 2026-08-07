@@ -1,0 +1,97 @@
+MEJAI MATCHING BALANCE REPORT
+========================================================================
+
+Interpretation guide:
+  |SMD| < 0.10: good balance
+  0.10 <= |SMD| < 0.20: review
+  |SMD| >= 0.20: poor balance
+
+PRIMARY_VARIABLE_RATIO
+------------------------------------------------------------------------
+Matched sets: 20,991
+Control rows: 34,128
+Control effective sample size: 28,050.5
+Maximum absolute SMD: 0.3615
+Median absolute SMD: 0.0185
+Covariates below 0.10: 14
+Covariates from 0.10 to below 0.20: 0
+Covariates at or above 0.20: 4
+
+Largest numeric imbalances:
+                      covariate   case_mean  control_mean  standardised_mean_difference balance_status
+                 deaths_last_5m    0.399647      0.646221                     -0.361452           POOR
+                  kills_last_5m    2.817207      2.320455                      0.295434           POOR
+            player_current_gold 1326.256681   1182.904650                      0.259562           POOR
+                assists_last_5m    2.434377      2.050323                      0.206562           POOR
+       observation_time_minutes   20.805944     20.314094                      0.079094           GOOD
+                   team_cs_diff   14.979753     17.104767                     -0.046917           GOOD
+player_xp_diff_vs_role_opponent 1477.687580   1410.379059                      0.041818           GOOD
+                   team_xp_diff 3978.266686   3830.974751                      0.030638           GOOD
+           rest_of_team_xp_diff 2500.579105   2420.595692                      0.019034           GOOD
+              player_total_gold 9496.603354   9441.785980                      0.017958           GOOD
+
+Within-set exact-field checks:
+                                 field  mismatched_sets  mismatch_rate
+                                region                0            0.0
+                         team_position                0            0.0
+dark_seal_purchased_before_observation                0            0.0
+
+RELAXED_VARIABLE_RATIO
+------------------------------------------------------------------------
+Matched sets: 24,939
+Control rows: 41,559
+Control effective sample size: 33,946.4
+Maximum absolute SMD: 0.5803
+Median absolute SMD: 0.0240
+Covariates below 0.10: 13
+Covariates from 0.10 to below 0.20: 1
+Covariates at or above 0.20: 4
+
+Largest numeric imbalances:
+                             covariate   case_mean  control_mean  standardised_mean_difference balance_status
+dark_seal_purchased_before_observation    0.990617      0.832311                      0.580253           POOR
+                        deaths_last_5m    0.399615      0.625212                     -0.333920           POOR
+                         kills_last_5m    2.855648      2.363801                      0.289587           POOR
+                   player_current_gold 1422.705201   1271.664167                      0.243318           POOR
+                       assists_last_5m    2.445768      2.073947                      0.198052         REVIEW
+              observation_time_minutes   20.771575     20.289086                      0.077701           GOOD
+                          team_cs_diff   15.073660     17.279442                     -0.048790           GOOD
+       player_xp_diff_vs_role_opponent 1522.315249   1455.567719                      0.041051           GOOD
+                          team_xp_diff 4036.278680   3894.008875                      0.029769           GOOD
+                  rest_of_team_xp_diff 2513.963431   2438.441156                      0.018137           GOOD
+
+Within-set exact-field checks:
+                                 field  mismatched_sets  mismatch_rate
+                                region                0       0.000000
+                         team_position                0       0.000000
+dark_seal_purchased_before_observation             3948       0.158306
+
+PRIMARY_1TO1
+------------------------------------------------------------------------
+Matched sets: 20,991
+Control rows: 20,991
+Control effective sample size: 20,991.0
+Maximum absolute SMD: 0.3337
+Median absolute SMD: 0.0185
+Covariates below 0.10: 14
+Covariates from 0.10 to below 0.20: 0
+Covariates at or above 0.20: 4
+
+Largest numeric imbalances:
+                      covariate   case_mean  control_mean  standardised_mean_difference balance_status
+                 deaths_last_5m    0.399647      0.625506                     -0.333705           POOR
+                  kills_last_5m    2.817207      2.344005                      0.281708           POOR
+            player_current_gold 1326.256681   1188.990091                      0.248999           POOR
+                assists_last_5m    2.434377      2.061360                      0.200756           POOR
+       observation_time_minutes   20.805944     20.313180                      0.079246           GOOD
+                   team_cs_diff   14.979753     16.758992                     -0.039279           GOOD
+player_xp_diff_vs_role_opponent 1477.687580   1415.688104                      0.038478           GOOD
+                   team_xp_diff 3978.266686   3835.170502                      0.029762           GOOD
+           rest_of_team_xp_diff 2500.579105   2419.482397                      0.019298           GOOD
+              player_total_gold 9496.603354   9442.820399                      0.017617           GOOD
+
+Within-set exact-field checks:
+                                 field  mismatched_sets  mismatch_rate
+                                region                0            0.0
+                         team_position                0            0.0
+dark_seal_purchased_before_observation                0            0.0

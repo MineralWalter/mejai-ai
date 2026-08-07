@@ -1,0 +1,2 @@
+group_type,group,matched_sets,case_win_rate,control_win_rate,risk_difference,risk_difference_ci_low,risk_difference_ci_high
+overall,all,20991,0.7728073936448955,0.7320359519159004,0.040771441728994974,0.03432813554355852,0.04721474791443143
