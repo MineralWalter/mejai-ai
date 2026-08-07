@@ -126,3 +126,7 @@ data/analysis/generalized_outcome/simple_outcome_summary.csv
 data/analysis/generalized_outcome/ai_exploration/analyst_decision.json
 data/analysis/generalized_outcome/ai_exploration/team_state_by_purchase_time_group.csv
 data/analysis/generalized_outcome/ai_exploration/team_state_by_purchase_time.csv
+data/analysis/generalized_outcome/ai_exploration/ai_exploratory_memo.md
+data/analysis/generalized_outcome/ai_exploration/analyst_trace.json
+data/analysis/generalized_outcome/ai_exploration/step_1_team_state_by_purchase_time_group.csv
+data/analysis/generalized_outcome/ai_exploration/step_2_player_state_by_purchase_time_group.csv
