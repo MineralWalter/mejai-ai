@@ -123,3 +123,6 @@ data/analysis/generalized_outcome/matched_set_effects.parquet
 data/analysis/generalized_outcome/simple_outcome_by_group.csv
 data/analysis/generalized_outcome/simple_outcome_report.txt
 data/analysis/generalized_outcome/simple_outcome_summary.csv
+data/analysis/generalized_outcome/ai_exploration/analyst_decision.json
+data/analysis/generalized_outcome/ai_exploration/team_state_by_purchase_time_group.csv
+data/analysis/generalized_outcome/ai_exploration/team_state_by_purchase_time.csv
