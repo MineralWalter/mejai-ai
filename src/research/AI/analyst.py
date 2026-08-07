@@ -156,7 +156,7 @@ def calculate_joint_subgroups(effects, group_a, group_b):
 
     if output.empty:
         raise ValueError(
-            "No interaction groups met the minimum of "
+            "No joint subgroup combinations met the minimum of "
             f"{MIN_MATCHED_SETS} matched sets"
         )
 
@@ -176,11 +176,11 @@ def previous_results_text(trace):
     completed = [
         step
         for step in trace
-        if step.get("action") == "interaction"
+        if step.get("action") == "joint_subgroup"
     ]
 
     if not completed:
-        return "No exploratory interaction has been run yet."
+        return "No exploratory joint subgroup analysis has been run yet."
 
     sections = []
 
@@ -203,7 +203,7 @@ def build_decision_prompt(summary, trace, step_number):
     completed_pairs = [
         f"- {step['group_a']} with {step['group_b']}"
         for step in trace
-        if step.get("action") == "interaction"
+        if step.get("action") == "joint_subgroup"
     ]
 
     completed_text = "\n".join(completed_pairs) if completed_pairs else "- none"
@@ -214,7 +214,7 @@ Choose exactly one approved joint subgroup analysis.
 
 Return only JSON in this form:
 {
-  "action": "interaction",
+  "action": "joint_subgroup",
   "group_a": "team_state",
   "group_b": "purchase_time_group",
   "reason": "One concise evidence-based reason."
@@ -226,7 +226,7 @@ Choose either one new approved joint subgroup analysis or finish.
 
 For another joint subgroup analysis, return only JSON in this form:
 {
-  "action": "interaction",
+  "action": "joint_subgroup",
   "group_a": "team_state",
   "group_b": "purchase_time_group",
   "reason": "One concise evidence-based reason."
@@ -317,7 +317,8 @@ def validate_decision(decision, trace, step_number):
     if action == "finish":
         if step_number == 1:
             raise ValueError(
-                "The AI must run at least one exploratory interaction before finishing"
+                "The AI must run at least one exploratory "
+                "joint subgroup analysis before finishing"
             )
 
         return {
@@ -325,9 +326,9 @@ def validate_decision(decision, trace, step_number):
             "reason": validate_reason(decision.get("reason", "")),
         }
 
-    if action != "interaction":
+    if action != "joint_subgroup":
         raise ValueError(
-            "AI action must be either 'interaction' or 'finish'"
+            "AI action must be either 'joint_subgroup' or 'finish'"
         )
 
     required_fields = {"group_a", "group_b", "reason"}
@@ -352,16 +353,17 @@ def validate_decision(decision, trace, step_number):
     completed_pairs = {
         frozenset({step["group_a"], step["group_b"]})
         for step in trace
-        if step.get("action") == "interaction"
+        if step.get("action") == "joint_subgroup"
     }
 
     if pair in completed_pairs:
         raise ValueError(
-            "AI selected an interaction that has already been completed"
+            "AI selected a joint subgroup analysis that "
+            "has already been completed"
         )
 
     return {
-        "action": "interaction",
+        "action": "joint_subgroup",
         "group_a": group_a,
         "group_b": group_b,
         "reason": validate_reason(decision["reason"]),
@@ -425,7 +427,8 @@ State clearly that:
 
 Do not use "effect", "impact", "influence", "caused", or similar causal wording.
 Do not speculate about player psychology, motivation, behaviour, or decision-making.
-Do not claim a formal statistical interaction, moderation, or subgroup difference test was performed.\nThe outputs are descriptive joint subgroup matched differences only.
+Do not claim a formal statistical interaction, moderation, or subgroup difference test was performed.
+The outputs are descriptive joint subgroup matched differences only.
 
 Primary evidence:
 {primary}

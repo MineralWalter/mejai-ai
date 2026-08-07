@@ -22,10 +22,10 @@ REQUEST_DELAY = 1.25
 CHECKPOINT_EVERY = 100
 MATCH_TARGET = 100000
 
-PLAYERS_FILE = "players_checkpoint.csv"
-MATCHES_FILE = "matches_checkpoint.csv"
-PROCESSED_FILE = "processed_checkpoint.csv"
-QUEUE_FILE = "queue_checkpoint.csv"
+PLAYERS_FILE = "checkpoints/players_checkpoint.csv"
+MATCHES_FILE = "checkpoints/matches_checkpoint.csv"
+PROCESSED_FILE = "checkpoints/processed_checkpoint.csv"
+QUEUE_FILE = "checkpoints/queue_checkpoint.csv"
 
 stop_event = Event()
 
