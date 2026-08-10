@@ -887,3 +887,9 @@ These results suggest that Mejai's observed success is not explained solely by p
 The bounded AI-guided exploratory analysis added further context by selecting cross-stratified follow-up analyses across game state and purchase timing. Those deterministic results showed similar patterns across several close and behind-state subgroups, while keeping the primary matched analysis unchanged.
 
 The conclusion remains observational: matching improves comparability between purchase and non-purchase situations, but residual imbalance and unmeasured factors remain. The project therefore supports an association between Mejai purchases and higher win rates across multiple game states, rather than a causal claim that purchasing Mejai itself increases the probability of winning.
+
+## AI Usage
+
+AI tools were used during development for code review, debugging, documentation support, and research discussion. Final methodological decisions, implementation, validation, and interpretation were reviewed and controlled by the author.
+
+The project's local-LLM analyst is a separate, intentional component of the research workflow and is described in the AI-Native Exploratory Analysis section above.
