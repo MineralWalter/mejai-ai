@@ -8,11 +8,7 @@ from src.research.config import V2_MATCHING_DIR, V2_OUTCOME_DIR
 
 
 PRIMARY_MATCHED_FILE = V2_MATCHING_DIR / "mejai_matched_primary.parquet"
-NUMERIC_BALANCE_FILE = (
-    V2_MATCHING_DIR
-    / "balance"
-    / "primary_variable_ratio_numeric_balance.csv"
-)
+NUMERIC_BALANCE_FILE = V2_MATCHING_DIR / "balance" / "primary_variable_ratio_numeric_balance.csv"
 
 OUTCOME_SUMMARY_FILE = V2_OUTCOME_DIR / "simple_outcome_summary.csv"
 OUTCOME_GROUPS_FILE = V2_OUTCOME_DIR / "simple_outcome_by_group.csv"
@@ -33,22 +29,17 @@ def normalise_outcome(series):
     if pd.api.types.is_numeric_dtype(series):
         return pd.to_numeric(series, errors="coerce")
 
-    return (
-        series.astype(str)
-        .str.strip()
-        .str.lower()
-        .map(
-            {
-                "true": 1,
-                "false": 0,
-                "1": 1,
-                "0": 0,
-                "win": 1,
-                "loss": 0,
-                "won": 1,
-                "lost": 0,
-            }
-        )
+    return series.astype(str).str.strip().str.lower().map(
+        {
+            "true": 1,
+            "false": 0,
+            "1": 1,
+            "0": 0,
+            "win": 1,
+            "loss": 0,
+            "won": 1,
+            "lost": 0,
+        }
     )
 
 
@@ -79,10 +70,7 @@ def load_primary_matched():
 
     matched["matched_set_id"] = matched["matched_set_id"].astype(str)
     matched["treatment"] = pd.to_numeric(matched["treatment"], errors="coerce")
-    matched["matching_weight"] = pd.to_numeric(
-        matched["matching_weight"],
-        errors="coerce",
-    )
+    matched["matching_weight"] = pd.to_numeric(matched["matching_weight"], errors="coerce")
     matched["outcome_numeric"] = normalise_outcome(matched["outcome_win"])
 
     numeric_columns = [
@@ -125,16 +113,10 @@ def validate_matched_sets(matched):
     working = matched.copy()
     working["case_row"] = working["treatment"].eq(1).astype(int)
     working["control_row"] = working["treatment"].eq(0).astype(int)
-    working["case_weight_component"] = (
-        working["matching_weight"] * working["case_row"]
-    )
-    working["control_weight_component"] = (
-        working["matching_weight"] * working["control_row"]
-    )
+    working["case_weight_component"] = working["matching_weight"] * working["case_row"]
+    working["control_weight_component"] = working["matching_weight"] * working["control_row"]
 
-    checks = (
-        working.groupby("matched_set_id")
-        .agg(
+    checks = (working.groupby("matched_set_id").agg(
             case_rows=("case_row", "sum"),
             control_rows=("control_row", "sum"),
             case_weight=("case_weight_component", "sum"),
@@ -156,33 +138,22 @@ def validate_matched_sets(matched):
 
 
 def build_matched_set_effects(matched):
-    cases = (
-        matched[matched["treatment"] == 1]
-        .set_index("matched_set_id")
-        .copy()
-    )
+    cases = matched[matched["treatment"] == 1].set_index("matched_set_id").copy()
 
     if cases.index.duplicated().any():
         raise ValueError("More than one case row found in a matched set")
 
     controls = matched[matched["treatment"] == 0].copy()
-    controls["weighted_outcome"] = (
-        controls["outcome_numeric"] * controls["matching_weight"]
-    )
+    controls["weighted_outcome"] = controls["outcome_numeric"] * controls["matching_weight"]
 
-    control_rates = (
-        controls.groupby("matched_set_id")
-        .agg(
+    control_rates = (controls.groupby("matched_set_id").agg(
             weighted_outcome_sum=("weighted_outcome", "sum"),
             control_weight_sum=("matching_weight", "sum"),
             selected_control_count=("matched_set_id", "size"),
         )
     )
 
-    control_rates["control_win_rate"] = (
-        control_rates["weighted_outcome_sum"]
-        / control_rates["control_weight_sum"]
-    )
+    control_rates["control_win_rate"] = (control_rates["weighted_outcome_sum"] / control_rates["control_weight_sum"])
 
     set_effects = cases.join(
         control_rates[
@@ -191,20 +162,15 @@ def build_matched_set_effects(matched):
                 "control_weight_sum",
                 "selected_control_count",
             ]
-        ],
-        how="inner",
+        ],how="inner",
     )
 
     if len(set_effects) != len(cases):
         raise ValueError("One or more case rows have no matched controls")
 
     set_effects["case_win"] = set_effects["outcome_numeric"].astype(int)
-    set_effects["risk_difference"] = (
-        set_effects["case_win"] - set_effects["control_win_rate"]
-    )
-    set_effects["observation_time_minutes"] = (
-        set_effects["observation_timestamp"] / 60_000
-    )
+    set_effects["risk_difference"] = set_effects["case_win"] - set_effects["control_win_rate"]
+    set_effects["observation_time_minutes"] = set_effects["observation_timestamp"] / 60_000
 
     return set_effects.reset_index()
 
@@ -233,9 +199,7 @@ def add_subgroups(set_effects):
         right=False,
     )
 
-    output["lifecycle_group"] = (
-        output["lifecycle_status"].astype(str).str.strip().str.upper()
-    )
+    output["lifecycle_group"] = output["lifecycle_status"].astype(str).str.strip().str.upper()
 
     return output
 
@@ -258,9 +222,7 @@ def confidence_interval(values):
 
 
 def summarise_group(frame, group_type, group):
-    risk_difference, ci_low, ci_high = confidence_interval(
-        frame["risk_difference"]
-    )
+    risk_difference, ci_low, ci_high = confidence_interval(frame["risk_difference"])
 
     return {
         "group_type": group_type,
@@ -277,12 +239,7 @@ def summarise_group(frame, group_type, group):
 def build_outcome_summaries(set_effects):
     rows = [summarise_group(set_effects, "overall", "all")]
 
-    for column in [
-        "team_state",
-        "player_state",
-        "purchase_time_group",
-        "lifecycle_group",
-    ]:
+    for column in ["team_state","player_state","purchase_time_group","lifecycle_group",]:
         for value, group in set_effects.dropna(subset=[column]).groupby(
             column,
             observed=True,
@@ -292,8 +249,7 @@ def build_outcome_summaries(set_effects):
 
     summary = pd.DataFrame(rows)
 
-    expected_counts = {
-        "team_state": 3,
+    expected_counts = {"team_state": 3,
         "player_state": 3,
         "purchase_time_group": 3,
         "lifecycle_group": 2,
@@ -376,10 +332,7 @@ def write_deterministic_report(summary):
         ]
     )
 
-    DETERMINISTIC_REPORT_FILE.write_text(
-        report + "\n",
-        encoding="utf-8",
-    )
+    DETERMINISTIC_REPORT_FILE.write_text(report + "\n", encoding="utf-8")
 
 
 def save_deterministic_outputs(set_effects, summary):
@@ -390,11 +343,7 @@ def save_deterministic_outputs(set_effects, summary):
         index=False,
     )
     summary.to_csv(OUTCOME_GROUPS_FILE, index=False)
-    set_effects.to_parquet(
-        MATCHED_SET_EFFECTS_FILE,
-        index=False,
-        engine="pyarrow",
-    )
+    set_effects.to_parquet(MATCHED_SET_EFFECTS_FILE, index=False, engine="pyarrow")
     write_deterministic_report(summary)
 
     for path in [
@@ -546,11 +495,7 @@ def validate_ai_report(report):
         "# Questions the AI analyst could answer next",
     ]
 
-    missing = [
-        heading
-        for heading in required_headings
-        if heading not in report
-    ]
+    missing = [heading for heading in required_headings if heading not in report]
 
     if missing:
         raise ValueError(
@@ -567,19 +512,13 @@ def validate_ai_report(report):
 
     lowered = report.lower()
 
-    if any(
-        phrase in lowered
-        for phrase in planning_phrases
-    ):
+    if any(phrase in lowered for phrase in planning_phrases):
         raise ValueError(
             "The model returned planning text instead of "
             "only the finished report"
         )
 
-    if (
-        "observational" not in lowered
-        and "association" not in lowered
-    ):
+    if "observational" not in lowered and "association" not in lowered:
         raise ValueError(
             "The AI report does not clearly describe the "
             "analysis as observational or associative"
@@ -602,10 +541,8 @@ def calculate_deterministic_evidence():
 
 def main():
     parser = argparse.ArgumentParser(
-        description=(
-            "Calculate deterministic matched outcomes and optionally generate "
-            "a grounded local-AI interpretation."
-        )
+        description="Calculate deterministic matched outcomes and optionally generate "
+        "a grounded local-AI interpretation."
     )
 
     parser.add_argument(
@@ -630,16 +567,8 @@ def main():
     print("")
     print(
         summary[
-            [
-                "group_type",
-                "group",
-                "matched_sets",
-                "case_win_rate",
-                "control_win_rate",
-                "risk_difference",
-            ]
-        ].to_string(index=False)
-    )
+            ["group_type","group","matched_sets","case_win_rate","control_win_rate","risk_difference",]
+        ].to_string(index=False))
 
     if args.evidence_only:
         print("")
@@ -652,9 +581,7 @@ def main():
     print(f"[SAVED] {PROMPT_FILE}")
 
     if args.prompt_only:
-        print(
-            "[PASSED] GROUNDED AI PROMPT BUILT WITHOUT CALLING THE MODEL"
-        )
+        print("[PASSED] GROUNDED AI PROMPT BUILT WITHOUT CALLING THE MODEL")
         return
 
     try:
@@ -666,14 +593,9 @@ def main():
             f"the configured model is installed. Original error: {error}"
         ) from error
 
-    response = validate_ai_report(
-        response
-    )
+    response = validate_ai_report(response)
 
-    AI_REPORT_FILE.write_text(
-        response + "\n",
-        encoding="utf-8",
-    )
+    AI_REPORT_FILE.write_text(response + "\n", encoding="utf-8")
 
     print("")
     print(response)

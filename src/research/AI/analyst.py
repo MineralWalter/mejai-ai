@@ -391,7 +391,7 @@ def build_final_memo_prompt(summary, trace):
     exploration = json.dumps(trace, indent=2)
 
     return f"""
-You are writing the final exploratory memo for a graduate data project.
+You are writing a concise exploratory memo for the Mejai's Soulstealer analysis.
 
 The primary matched analysis was completed before the AI-guided exploration.
 The primary findings remain authoritative.
@@ -482,10 +482,7 @@ def validate_final_memo(memo):
     ]
 
     if flagged:
-        print(
-            "[AI CHECK] Memo completed, but review wording manually: "
-            + ", ".join(flagged)
-        )
+        print("[AI CHECK] Memo completed, but review wording manually: "+ ", ".join(flagged))
 
     return memo
 
@@ -512,30 +509,17 @@ def main():
         prompt = build_decision_prompt(summary, trace, step_number)
         response = ask_model(prompt)
 
-        decision = validate_decision(
-            parse_model_json(response),
-            trace,
-            step_number,
-        )
+        decision = validate_decision(parse_model_json(response),trace,step_number,)
 
         if decision["action"] == "finish":
             print("[AI] Finished exploration.")
             print(f"[AI] Reason: {decision['reason']}")
 
-            trace.append(
-                {
-                    "step": step_number,
-                    **decision,
-                }
-            )
-
+            trace.append({"step": step_number,**decision,})
             save_trace(trace)
             break
 
-        print(
-            "[AI] Selected: "
-            f"{decision['group_a']} × {decision['group_b']}"
-        )
+        print("[AI] Selected: "f"{decision['group_a']} × {decision['group_b']}")
         print(f"[AI] Reason: {decision['reason']}")
 
         result = calculate_joint_subgroups(
@@ -574,14 +558,9 @@ def main():
     print("")
     print("[AI] Synthesising exploratory findings...")
 
-    memo = validate_final_memo(
-        ask_model(memo_prompt)
-    )
+    memo = validate_final_memo(ask_model(memo_prompt))
 
-    EXPLORATORY_MEMO_FILE.write_text(
-        memo + "\n",
-        encoding="utf-8",
-    )
+    EXPLORATORY_MEMO_FILE.write_text(memo + "\n",encoding="utf-8",)
 
     print("")
     print(memo)
