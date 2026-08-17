@@ -15,7 +15,7 @@ I built a multi-region Riot API pipeline to collect match and timeline data, rec
 - [Primary Matching Strategy](#primary-matching-strategy)
 - [Primary Results](#primary-results)
 - [Balance and Robustness](#balance-and-robustness)
-- [AI-Native Exploratory Analysis](#ai-native-exploratory-analysis)
+- [LLM-Guided Exploratory Analysis](#llm-guided-exploratory-analysis)
 - [Exploratory Results](#exploratory-results)
 - [Interpretation](#interpretation)
 - [Limitations](#limitations)
@@ -730,7 +730,6 @@ Results from the second LLM-selected subgroup analysis.
 - weighted within-set controls
 - standardized mean difference diagnostics
 - sensitivity and robustness specifications
-- deterministic subgroup analysis
 
 ### AI integration
 
@@ -751,5 +750,3 @@ The largest differences appeared when the buyer's team was close or behind rathe
 The LLM-guided exploration found similar descriptive patterns across several purchase-time subgroups.
 
 These results remain observational. Matching improves comparability, but residual imbalance and unmeasured factors mean the analysis does not show that purchasing Mejai itself causes a higher chance of winning.
-
-The project's local-LLM analyst is a separate, intentional component of the research workflow and is described in the AI-Native Exploratory Analysis section above.
