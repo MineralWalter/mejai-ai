@@ -1,11 +1,10 @@
 # Analysing High-Risk, High-Reward Game Decisions Using Matched Game States
 
-An observational League of Legends data project examining whether **Mejai's Soulstealer** is mainly associated with already-winning game states,or whether positive matched win-rate differences also appear when the buyer's team is losing.
+This project investigates whether **Mejai's Soulstealer** is mainly a "win-more" item, or whether positive associations also appear when players buy it from close or losing game states.
 
-This repository covers an AI-guided research workflow, combining a constrained LLM  with  Python analysis. It also includes data collection via Riot API, timeline extraction, purchase-lifecycle reconstruction, feature engineering, matched observational analysis, and balance and robustness validation. The LLM selects bounded exploratory follow-up questions from an approved statistical toolset, while Python validates actions and performs all numerical calculations.
+I built a multi-region Riot API pipeline to collect match and timeline data, reconstruct Mejai purchase events, engineer purchase-time features, and compare purchases with similar non-purchase situations using matched observational analysis. The project also includes balance and robustness checks and a local LLM that selects from predefined exploratory analyses, while Python performs the calculations.
 
 > **Important:** this is an observational study. Reported differences are associations within matched comparisons and should not be interpreted as causal effects of purchasing Mejai's Soulstealer.
-
 ---
 
 ## Contents
@@ -29,7 +28,6 @@ This repository covers an AI-guided research workflow, combining a constrained L
 - [Takeaway](#final-takeaway)
 
 ---
-
 ## Project Overview
 
 ### End-to-end pipeline
@@ -38,25 +36,13 @@ This repository covers an AI-guided research workflow, combining a constrained L
 Riot API
    |
    v
-Match discovery and collection
+Match and timeline collection
    |
    v
-Match + timeline extraction
+Parquet datasets
    |
    v
-Parquet research tables
-   |
-   v
-Valid-match manifest
-   |
-   v
-Mejai event catalogue
-   |
-   v
-Purchase lifecycle reconstruction
-   |
-   v
-Case dataset + non-purchase candidate pool
+Mejai purchase reconstruction
    |
    v
 Purchase-time feature engineering
@@ -64,27 +50,23 @@ Purchase-time feature engineering
    v
 Matched analysis
    |
-   +--> balance diagnostics
-   +--> sensitivity / robustness analyses
+   +--> balance checks
+   +--> sensitivity and robustness checks
    |
    v
-Deterministic outcome summaries
+Outcome analysis
    |
    v
-Bounded local-LLM exploratory analyst
-   |
-   v
-Auditable exploratory CSVs + trace
+Local LLM exploratory analysis
 ```
 
 ### Design principles
 
-The final project has 4 phases:
+The project has three main parts:
 
-1. **Data acquisition** — Riot API match and timeline collection.
-2. **Deterministic research pipeline** — event reconstruction, feature engineering, matching, validation, and outcome calculation.
-3. **AI-guided exploration** — a bounded local model chooses from a restricted set of follow-up analyses after the primary analysis is frozen.
-4. **Tracked evidence** — compact final CSV and text outputs under `reports/`
+1. **Data collection and preparation**: collect match and timeline data from the Riot API and reconstruct Mejai purchase events.
+2. **Matched analysis**: compare Mejai purchases with similar non-purchase situations using purchase-time game state and player features.
+3. **LLM-guided exploration**: after the main analysis, a local model selects from a small set of predefined subgroup analyses while Python performs the calculations.
 ---
 
 ## Dataset
@@ -99,7 +81,7 @@ The final project has 4 phases:
 | Reconstructed purchase lifecycles | 26,350 |
 | Primary eligible Mejai purchases | 25,416 |
 
-The collection strategy targeted **high-MMR Ranked Solo/Duo** games across multiple Riot servers: Vietnam, EU West, North America, Korea. Match discovery began from regional seed accounts and expanded through participant relationships with checkpointed collection state.
+The dataset focuses on **high-MMR Ranked Solo/Duo** games from Vietnam, EU West, North America, and Korea. Match collection began from seed accounts in each region and expanded through players found in collected matches.
 
 ### Purchase lifecycle reconstruction
 
@@ -112,88 +94,60 @@ Mejai purchases were reconstructed from timeline events rather than inferred onl
 | `UNDONE` | 934 |
 | **Total** | **26,350** |
 
-The primary analysis uses:
+The primary analysis includes `RETAINED` and `SOLD` purchases and excludes `UNDONE` purchases, leaving **25,416 eligible purchases**.
 
-```text
-RETAINED + SOLD
-```
-
-and excludes:
-
-```text
-UNDONE
-```
-
-This produces **25,416 primary eligible purchases**.
-
-`UNDONE` purchases are excluded because an immediately reversed transaction does not represent the same purchase decision as a retained or later-sold item.
+`UNDONE` purchases are excluded because they represent immediately reversed transactions rather than completed purchase decisions.
 
 ---
-
 ## Research Design
 
 ### Unit of analysis
 
-The analysis is built around the **Mejai purchase event**, not simply the player or full match.
+The analysis focuses on the **Mejai purchase event**, rather than treating the whole match as a single observation.
 
-For each eligible purchase, the pipeline reconstructs game state around the purchase timestamp. Candidate controls are observations where a comparable player **did not purchase Mejai** at a similar point under similar conditions.
+For each eligible purchase, the pipeline reconstructs the game state around the purchase time. It then looks for similar situations where a comparable player **did not purchase Mejai**.
 
-### Purchase-time information
+### Matching features
 
-The matching and diagnostic pipeline uses information such as:
+Matching uses purchase-time information including:
 
 - game time;
-- player level;
-- player total gold;
-- player current gold;
-- player XP;
-- minion and jungle CS;
-- player gold difference versus the same-role opponent;
-- player XP difference versus the same-role opponent;
-- rest-of-team gold difference;
-- rest-of-team XP difference;
-- whole-team gold and XP state;
+- player level, gold, XP, and CS;
+- gold and XP difference versus the same-role opponent;
+- team gold and XP state;
 - recent kills, deaths, and assists;
 - prior Dark Seal ownership;
-- region;
-- team position; and
-- champion identity for balance diagnostics.
+- region; and
+- team position.
+
+Champion identity is also checked as part of the balance diagnostics.
 
 Recent combat features use a five-minute lookback window.
 
 ### Why matching?
 
-The central confounding problem is:
+Players are more likely to buy Mejai when the game is already going well, and those situations are also more likely to end in a win.
 
-```text
-Strong game state
-      |
-      +------> higher probability of buying Mejai
-      |
-      +------> higher probability of winning
-```
+A simple win-rate comparison would therefore mix the effect of the purchase with the game state in which the purchase was made.
 
-A raw win-rate comparison would therefore mix the purchase with the conditions that made the purchase more likely.
-
-Matching attempts to construct a more comparable non-purchase reference group on observed pre-purchase state. This reduces, but does not eliminate, confounding.
+Matching reduces this problem by comparing Mejai purchases with similar non-purchase situations based on observed game state. It improves comparability, but does not remove all possible confounding.
 
 ---
 
 ## Primary Matching Strategy
 
-The frozen primary design uses **variable-ratio matching with up to three controls per Mejai case**.
+The primary analysis uses **variable-ratio matching with up to three controls per Mejai purchase**.
 
-### Primary restrictions
+### Matching restrictions
 
-The final primary matcher includes:
+Controls must have:
 
-- same region;
-- same team position;
-- exact prior Dark Seal status;
-- a hard maximum current-gold gap of **750 gold**;
-- state and recent-event variables used for candidate ranking;
-- up to **3 controls per case**; and
-- within-set control weights that sum to 1.
+- the same region;
+- the same team position;
+- the same prior Dark Seal status; and
+- no more than **750 gold** difference in current gold.
+
+Other game-state and recent-combat features are used to rank eligible controls. Each case can have up to **3 controls**, with control weights summing to 1 within each matched set.
 
 ### Matched sample
 
@@ -209,19 +163,19 @@ The final primary matcher includes:
 | Mean current-gold gap | 318.4 |
 | Maximum current-gold gap | 750 |
 
-All **34,128** selected primary control rows satisfied the exact prior-Dark-Seal requirement. No Dark Seal fallback controls were used in the primary analysis.
+All **34,128** selected controls matched the case on prior Dark Seal status.
 
 ### Outcome calculation
 
 For each matched set:
 
 ```text
-matched risk difference
-    = case win indicator
+matched win-rate difference
+    = case win
     - weighted control win rate
 ```
 
-The overall reported difference is the mean matched-set difference. This preserves the variable-ratio weighting design instead of allowing cases with more controls to dominate the estimate.
+The overall result is the average of these matched-set differences, so cases with more controls do not receive more weight.
 
 ---
 
@@ -237,7 +191,7 @@ The final primary analysis contains **20,991 matched Mejai purchase cases**.
 | Weighted matched controls | 73.20% |
 | **Matched win-rate difference** | **+4.08 percentage points** |
 
-Approximate 95% confidence interval for the matched-set difference:
+Approximate 95% confidence interval:
 
 ```text
 +3.43 pp to +4.72 pp
@@ -253,7 +207,7 @@ The result is positive in the final matched sample, but remains an **observation
 | Ahead | 13,983 | **+1.21 pp** |
 | Behind | 2,009 | **+8.28 pp** |
 
-The largest descriptive matched differences appear in **close** and **behind** team states rather than in the already-ahead group. What this means is that it argues against interpreting the entire observed Mejai association as a simple "already winning by a lot" pattern; it does **not** show that buying Mejai causes a comeback.
+The largest matched differences appear in close and behind team states rather than in the already-ahead group. This argues against a simple "Mejai only looks good because it is bought while already far ahead" explanation, but it does not show that buying Mejai causes a comeback.
 
 ### Player state
 
@@ -322,25 +276,15 @@ The relaxed specification increases coverage but permits Dark Seal fallback matc
 The 1:1 robustness result is close to the primary variable-ratio estimate.
 
 ---
+## LLM-Guided Exploratory Analysis
 
-## AI-Native Exploratory Analysis
+The main matched analysis was completed before the LLM exploration.
 
-The primary statistical analysis was completed and frozen **before** the AI-guided exploration.
+The project uses a local `qwen3:4b-instruct` model through Ollama. Rather than generating statistics itself, the model selects from a small set of predefined subgroup analyses and Python performs the calculations.
 
-The AI component is deliberately constrained so that the model can direct a small exploratory workflow without becoming the statistical engine.
+### Available analyses
 
-### Local model
-
-The project uses:
-
-```text
-Ollama
-qwen3:4b-instruct
-```
-
-### Allowed analyses
-
-The model may choose only from:
+The model can choose from:
 
 ```text
 team_state × player_state
@@ -348,70 +292,26 @@ team_state × purchase_time_group
 player_state × purchase_time_group
 ```
 
-The maximum number of exploratory steps is:
+The model can select up to two exploratory analyses.
 
-```text
-2
-```
+For each step:
 
-The model can:
+1. the model reviews the main analysis results;
+2. it selects one available subgroup analysis;
+3. Python calculates the result; and
+4. the result is returned to the model before it decides whether to continue.
 
-1. inspect deterministic primary evidence;
-2. choose one approved joint subgroup analysis;
-3. receive the deterministic Python result; and
-4. choose one additional approved analysis or stop.
-
-### Guardrails
-
-The model cannot:
-
-- execute arbitrary Python or SQL;
-- modify the matcher;
-- change the primary analysis;
-- alter matching calipers;
-- create unrestricted statistical procedures;
-- search arbitrary subgroup combinations;
-- change the minimum support threshold;
-- calculate final statistics itself; or
-- promote exploratory results into primary findings.
-
-Python validates the requested action and performs all calculations.
-
-### Architecture
-
-```text
-Frozen primary evidence
-        |
-        v
-Local LLM chooses approved question
-        |
-        v
-Python validates action
-        |
-        v
-Python computes deterministic result
-        |
-        v
-Result returned to LLM
-        |
-        v
-LLM chooses another approved question or stops
-        |
-        v
-Full audit trace saved
-```
-
-This makes the project AI-native without allowing model-generated prose or calculations to replace the statistical pipeline.
+The model cannot run arbitrary code or change the matching design. This keeps the exploratory choices separate from the statistical calculations.
 
 ---
 
 ## Exploratory Results
 
-These results are **descriptive joint subgroup analyses**, not formal interaction or moderation tests.
+These are **descriptive subgroup analyses**, not formal tests of interaction between variables.
 
-Cells require at least **200 matched sets**.
+Only cells with at least **200 matched sets** are included.
 
-### Step 1 — Team State x Purchase Timing
+### Step 1 — Team State × Purchase Timing
 
 | Team state | Purchase timing | Matched sets | Matched difference |
 | --- | --- | ---: | ---: |
@@ -424,9 +324,9 @@ Cells require at least **200 matched sets**.
 | Ahead | 15-25 min | 7,941 | **+1.50 pp** |
 | Ahead | After 25 min | 3,254 | **+0.15 pp** |
 
-The behind-before-15 cell did not meet the minimum support threshold.
+The behind-before-15 group did not meet the minimum sample threshold.
 
-### Step 2 — Player State x Purchase Timing
+### Step 2 — Player State × Purchase Timing
 
 | Player state | Purchase timing | Matched sets | Matched difference |
 | --- | --- | ---: | ---: |
@@ -439,20 +339,18 @@ The behind-before-15 cell did not meet the minimum support threshold.
 | Behind | 15-25 min | 689 | **+2.71 pp** |
 | Ahead | After 25 min | 3,002 | **+2.61 pp** |
 
-The behind-before-15 cell did not meet the minimum support threshold.
+The behind-before-15 group did not meet the minimum sample threshold.
 
-Cell-level confidence intervals do **not** establish statistically significant differences between cells.
+These results describe patterns within subgroups. They do not show that the differences between subgroups are statistically significant.
 
 ---
 
 ## Interpretation
 
-The primary matched analysis does not support a purely simplistic interpretation of Mejai's Soulstealer as an item whose observed success is explained only by players purchasing it while already far ahead.
-
-Overall:
+The primary matched analysis finds a positive association between Mejai purchases and winning:
 
 ```text
-Matched difference: +4.08 pp
+Overall: +4.08 pp
 ```
 
 By team state:
@@ -463,28 +361,20 @@ Behind:  +8.28 pp
 Ahead:   +1.21 pp
 ```
 
-The exploratory joint subgroup analysis adds nuance by showing that several larger descriptive differences also occur in close or behind team states across different purchase windows.
+The largest matched differences appear in close and behind team states rather than in the already-ahead group. This suggests that the observed Mejai association is not explained only by players buying it while already far ahead.
 
-The appropriate conclusion is:
+The exploratory subgroup results show a similar pattern across several purchase-time windows.
 
-> **Mejai purchases are positively associated with winning within the final matched sample, including in close and behind game-state strata.**
-
-The project does **not** establish:
-
-> Buying Mejai causes a higher probability of winning.
-
-Unobserved player quality, champion-specific context, team composition, recall timing, decision context, and other factors may still influence both the purchase and final outcome.
+However, this remains an observational analysis. The results do not show that buying Mejai causes a higher chance of winning, and unmeasured factors such as player skill, champion choice, team composition, and decision context may still affect both the purchase and the outcome.
 
 ### Lifecycle outcomes
-
-Lifecycle was also retained for descriptive post-purchase analysis:
 
 | Lifecycle | Matched sets | Matched difference |
 | --- | ---: | ---: |
 | Retained | 17,507 | +8.34 pp |
 | Sold | 3,484 | -17.36 pp |
 
-These results are **descriptive only**. Whether Mejai is eventually retained or sold is determined after the original purchase and may depend on how the match develops, so lifecycle status is not treated as a purchase-time causal grouping.
+These results are descriptive only. Whether Mejai is retained or sold happens after the original purchase and may depend on how the match develops.
 
 ---
 
@@ -508,15 +398,15 @@ The strict primary design matches **82.59%** of eligible cases. Unmatched cases 
 
 ### High-MMR collection strategy
 
-The collection strategy targeted high-MMR Ranked Solo/Duo games, as players are likely to have more accurate itemization and decision-making. Results may not generalize directly to lower ranks, other queues, coordinated teams, or professional competition.
+The dataset focuses on high-MMR Ranked Solo/Duo games. Results may not generalize directly to lower ranks, other queues, coordinated teams, or professional competition.
 
 ### Exploratory subgroup selection
 
-The AI-guided subgroup analyses were selected after the primary results were available. They are exploratory rather than independently pre-specified confirmatory analyses.
+The LLM-guided subgroup analyses were selected after the primary results were available, so they are treated as exploratory.
 
 ### No formal interaction test
 
-The joint subgroup tables are descriptive cross-stratified analyses. The project does not claim formal statistical interaction, moderation, or significant differences between subgroup cells.
+The subgroup tables are descriptive. The project does not claim statistically significant differences between subgroup cells.
 
 ### Lifecycle is post-purchase
 
@@ -579,25 +469,18 @@ mejai-ai/
 |           `-- analyst.py
 |
 |-- reports/
-|   |
-|   |-- primary/
-|   |   |-- matching_balance_report.txt
-|   |   |-- matching_summary.csv
-|   |   |-- outcome_by_group.csv
-|   |   `-- outcome_summary.csv
-|   |
-|   `-- exploratory/
-|       |-- analyst_trace.json
-|       |-- step_1_team_state_by_purchase_time_group.csv
-|       `-- step_2_player_state_by_purchase_time_group.csv
-|
-`-- archive/
-    |-- legacy_preprocessing/
-    |-- diagnostics/
-    `-- experiments/
-```
+    |
+    |-- primary/
+    |   |-- matching_balance_report.txt
+    |   |-- matching_summary.csv
+    |   |-- outcome_by_group.csv
+    |   `-- outcome_summary.csv
+    |
+    `-- exploratory/
+        |-- step_1_team_state_by_purchase_time_group.csv
+        `-- step_2_player_state_by_purchase_time_group.csv
 
-`archive/` preserves historical development work but is not part of the final active primary analysis.
+```
 
 ---
 
@@ -606,7 +489,7 @@ mejai-ai/
 ### 1. Clone the repository
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/MineralWalter/mejai-ai.git
 cd mejai-ai
 ```
 
@@ -695,7 +578,7 @@ europe
 americas
 ```
 
-Checkpointed state supports large API collection jobs. The historical collection stage produced the match IDs used by `main.py` for detailed match and timeline processing.
+Checkpointing allows large collection runs to resume without starting over. Collected match IDs are then processed by `main.py` to retrieve detailed match and timeline data.
 
 Because the full collection is large and Riot API access is rate-limited, reproducing the complete acquisition stage is not necessary simply to review the research implementation.
 
@@ -770,13 +653,13 @@ py -m src.research.validate_semantics
 py -m src.research.validate_matching_balance
 ```
 
-### 9. Deterministic outcome evidence
+### 9. Outcome summaries
 
 ```powershell
 py -m src.research.AI.generate_report --evidence-only
 ```
 
-### 10. Bounded AI-guided exploration
+### LLM-guided exploration
 
 Requires Ollama and `qwen3:4b-instruct`:
 
@@ -784,47 +667,41 @@ Requires Ollama and `qwen3:4b-instruct`:
 py -m src.research.AI.analyst
 ```
 
-The AI stage is **post-primary exploratory analysis**.
+The LLM exploration is run after the main matched analysis.
 
 ---
 
 ## Tracked Outputs
 
-Large generated datasets remain local. The repository tracks a compact evidence package instead.
+Large generated datasets remain local, while the main analysis outputs are kept under `reports/`.
 
 ### `reports/primary/`
 
 #### `matching_summary.csv`
 
-Summary of primary variable-ratio, relaxed sensitivity, and 1:1 robustness matching.
+Summary of the primary, sensitivity, and 1:1 matching specifications.
 
 #### `matching_balance_report.txt`
 
-Detailed final matching-balance diagnostics.
+Matching balance diagnostics.
 
 #### `outcome_summary.csv`
 
-Overall deterministic matched outcome result.
+Overall matched outcome result.
 
 #### `outcome_by_group.csv`
 
-Deterministic subgroup summaries by team state, player state, purchase timing, and descriptive lifecycle status.
+Results by team state, player state, purchase timing, and lifecycle status.
 
 ### `reports/exploratory/`
 
-#### `analyst_trace.json`
-
-Audit trail of the bounded AI-guided exploratory path.
-
 #### `step_1_team_state_by_purchase_time_group.csv`
 
-Deterministic output for the first AI-selected joint subgroup analysis.
+Results from the first LLM-selected subgroup analysis.
 
 #### `step_2_player_state_by_purchase_time_group.csv`
 
-Deterministic output for the second AI-selected joint subgroup analysis.
-
-The deterministic CSV outputs are the authoritative exploratory evidence. Free-form model prose is not treated as statistical evidence.
+Results from the second LLM-selected subgroup analysis.
 
 ---
 
@@ -859,37 +736,20 @@ The deterministic CSV outputs are the authoritative exploratory evidence. Free-f
 
 - Ollama
 - Qwen3 4B Instruct
-- restricted JSON action protocol
-- deterministic Python execution
-- bounded two-step exploratory loop
-- auditable trace logging
+- structured JSON actions
+- predefined subgroup analyses
+- Python-based statistical execution
 
 ---
 
 ## Final Takeaway
 
-The final matched study finds a positive association between Mejai's Soulstealer purchases and winning:
+The matched analysis found a **+4.08 percentage-point** win-rate difference between Mejai purchases and similar non-purchase situations.
 
-```text
-Overall matched difference: +4.08 percentage points
-```
+The largest differences appeared when the buyer's team was close or behind rather than already ahead, which argues against a simple "Mejai only looks good because it is bought while already winning" explanation.
 
-The association is not concentrated only in already-ahead team states:
+The LLM-guided exploration found similar descriptive patterns across several purchase-time subgroups.
 
-```text
-Close team state:  +10.42 pp
-Behind team state:  +8.28 pp
-Ahead team state:   +1.21 pp
-```
-
-These results suggest that Mejai's observed success is not explained solely by players purchasing it from already-dominant positions. In the matched sample, the largest descriptive win-rate differences instead appeared in close and behind team states, supporting a more nuanced interpretation than "Mejai only looks good because it is bought while already winning."
-
-The bounded AI-guided exploratory analysis added further context by selecting cross-stratified follow-up analyses across game state and purchase timing. Those deterministic results showed similar patterns across several close and behind-state subgroups, while keeping the primary matched analysis unchanged.
-
-The conclusion remains observational: matching improves comparability between purchase and non-purchase situations, but residual imbalance and unmeasured factors remain. The project therefore supports an association between Mejai purchases and higher win rates across multiple game states, rather than a causal claim that purchasing Mejai itself increases the probability of winning.
-
-## AI Usage
-
-AI tools were used during development for code review, debugging, documentation support, and research discussion. Final methodological decisions, implementation, validation, and interpretation were reviewed and controlled by the author.
+These results remain observational. Matching improves comparability, but residual imbalance and unmeasured factors mean the analysis does not show that purchasing Mejai itself causes a higher chance of winning.
 
 The project's local-LLM analyst is a separate, intentional component of the research workflow and is described in the AI-Native Exploratory Analysis section above.
